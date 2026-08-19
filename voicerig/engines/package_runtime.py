@@ -7,12 +7,17 @@ import zipfile
 from pathlib import Path
 
 from voicerig.config import data_dir
-from voicerig.engines.chatterbox import _MODEL_RUN_LOCK, _save_pcm16, _shared_model
+from voicerig.engines.chatterbox import (
+    _MODEL_RUN_LOCK,
+    _conditioning_key,
+    _save_pcm16,
+    _set_conditioning_key,
+    _shared_model,
+)
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import chatterbox_device
 
 _ACTIVE_LOCK = threading.Lock()
-_ACTIVE_KEY: tuple[str, str] | None = None
 _VALIDATION_LOCK = threading.Lock()
 _VALIDATION_CACHE: dict[tuple[str, int, int], dict] = {}
 
@@ -85,10 +90,9 @@ def _materialize(package: Path, manifest: dict) -> Path:
 
 
 def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> None:
-    global _ACTIVE_KEY
-    key = (str(manifest["id"]), device)
+    key = ("package", str(manifest["id"]), device)
     with _ACTIVE_LOCK:
-        if _ACTIVE_KEY == key and model.conds is not None:
+        if _conditioning_key() == key and model.conds is not None:
             return
         cache = _materialize(package, manifest)
         try:
@@ -101,7 +105,7 @@ def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> N
             model.prepare_conditionals(str(cache / "reference.wav"), exaggeration=0.5)
             if model.conds is None:
                 raise RuntimeError("Chatterbox kunne ikke oprette conditioning fra reference.wav")
-        _ACTIVE_KEY = key
+        _set_conditioning_key(key)
 
 
 def synthesize(package: Path, text: str, output: Path) -> dict:

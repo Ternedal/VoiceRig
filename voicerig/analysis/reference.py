@@ -79,8 +79,6 @@ def _stitched_candidate(
     selected.sort(key=lambda item: item[0])
     parts = tuple((start, duration) for start, duration, _quality in selected)
     quality = weighted_quality / speech_s if speech_s else 0.0
-    # Prefer one genuinely contiguous clean turn when quality is otherwise equal,
-    # but allow stitched natural conversation to win over a poor long segment.
     stitch_penalty = 0.98 if len(parts) > 1 else 1.0
     score = quality * min(1.0, speech_s / target_s) * stitch_penalty
     return ReferenceCandidate(
@@ -93,14 +91,12 @@ def _stitched_candidate(
     )
 
 
-def select_reference(
+def _all_candidates(
     wavs: list[Path],
-    diarizations: dict[Path, list[Segment]] | None = None,
-    target_s: float = 10.0,
-) -> ReferenceCandidate:
-    diarizations = diarizations or {}
+    diarizations: dict[Path, list[Segment]],
+    target_s: float,
+) -> list[ReferenceCandidate]:
     candidates: list[ReferenceCandidate] = []
-
     for wav in wavs:
         segments = diarizations.get(wav) or []
         if segments:
@@ -133,7 +129,59 @@ def select_reference(
                 score = _window_quality(wav, pos, actual) * min(1.0, actual / target_s)
                 candidates.append(ReferenceCandidate(wav, pos, actual, score, None))
                 pos += step
+    return candidates
 
+
+def _candidate_parts(candidate: ReferenceCandidate) -> tuple[tuple[float, float], ...]:
+    return candidate.parts or ((candidate.start, candidate.duration),)
+
+
+def _overlap_ratio(a: ReferenceCandidate, b: ReferenceCandidate) -> float:
+    if a.source != b.source:
+        return 0.0
+    parts_a = _candidate_parts(a)
+    parts_b = _candidate_parts(b)
+    overlap = 0.0
+    for start_a, duration_a in parts_a:
+        end_a = start_a + duration_a
+        for start_b, duration_b in parts_b:
+            end_b = start_b + duration_b
+            overlap += max(0.0, min(end_a, end_b) - max(start_a, start_b))
+    denominator = min(
+        sum(duration for _start, duration in parts_a),
+        sum(duration for _start, duration in parts_b),
+    )
+    return overlap / denominator if denominator > 0.0 else 1.0
+
+
+def rank_references(
+    wavs: list[Path],
+    diarizations: dict[Path, list[Segment]] | None = None,
+    target_s: float = 10.0,
+    limit: int = 4,
+    max_overlap_ratio: float = 0.5,
+) -> list[ReferenceCandidate]:
+    """Return the best sufficiently diverse references, best candidate first."""
+    candidates = sorted(
+        _all_candidates(wavs, diarizations or {}, target_s),
+        key=lambda item: item.score,
+        reverse=True,
+    )
     if not candidates:
         raise ValueError("Der er for lidt brugbar tale. Tilføj mindst ca. 6-10 sekunders tydelig tale.")
-    return max(candidates, key=lambda item: item.score)
+
+    selected: list[ReferenceCandidate] = []
+    for candidate in candidates:
+        if all(_overlap_ratio(candidate, existing) <= max_overlap_ratio for existing in selected):
+            selected.append(candidate)
+        if len(selected) >= max(1, limit):
+            break
+    return selected or [candidates[0]]
+
+
+def select_reference(
+    wavs: list[Path],
+    diarizations: dict[Path, list[Segment]] | None = None,
+    target_s: float = 10.0,
+) -> ReferenceCandidate:
+    return rank_references(wavs, diarizations, target_s=target_s, limit=1)[0]

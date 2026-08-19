@@ -8,56 +8,82 @@ VoiceRig laver en portabel ModelRig-stemmeprofil ud fra almindelige lyd- og vide
 
 - Læser lyd/video gennem FFmpeg.
 - Finder et godt referenceklip automatisk.
-- Kan bruge lokal `pyannote/speaker-diarization-community-1` til flere talere.
+- Bruger lokal `pyannote/speaker-diarization-community-1` til flere talere.
+- Matcher samme speaker på tværs af flere klip.
 - Bygger Chatterbox Multilingual V3 voice conditioning.
 - Genererer dansk preview.
 - Pakker `reference.wav`, `conditioning.pt`, `preview.wav`, manifest og checksums i `.mrvoice`.
-- Installerer automatisk i den lokale ModelRig voice-mappe; remote API-mode er fallback.
-- Fungerer som local-first; kildefiler sendes ikke til en cloudtjeneste af VoiceRig.
+- Installerer automatisk i den lokale ModelRig voice-mappe.
+- Kører en lokal TTS-sidecar, som prebuilt ModelRig kan bruge direkte.
+- Fungerer local-first; kildefiler sendes ikke til en cloudtjeneste af VoiceRig.
+
+## Hardwaremål
+
+VoiceRig er designet til en enkelt NVIDIA-GPU med 12 GB VRAM.
+
+På Windows er runtime bevidst delt:
+
+- `.venv`: VoiceRig + Chatterbox + PyTorch 2.6.0 med CUDA 12.6.
+- `.venv-diarization`: pyannote + nyere CPU-only PyTorch.
+
+Det er nødvendigt, fordi den aktuelle Chatterbox-version pinner PyTorch 2.6.0,
+mens den aktuelle pyannote-version kræver PyTorch 2.8 eller nyere. Samtidig
+sikrer splittet, at speaker-analyse ikke bruger GPU-VRAM.
 
 ## Krav
 
-- Python 3.11+
+- Windows 10/11
+- Python 3.11
 - FFmpeg på `PATH`
-- Til fuld voice-cloning: CUDA anbefales, men Chatterbox vælger CPU fallback hvis CUDA ikke findes.
+- Git på `PATH`
+- NVIDIA-GPU med fungerende driver til CUDA PyTorch
 
-## Installation
+## Installation på Windows
 
-På Windows:
+Den understøttede installationsvej er:
 
 ```powershell
 .\setup-windows.ps1
 .\start-windows.ps1
 ```
 
-Manuelt:
+`setup-windows.ps1` opretter begge isolerede Python-miljøer, installerer den
+officielle CUDA-version af PyTorch til Chatterbox, installerer CPU-only
+pyannote-runtime, verificerer at CUDA faktisk virker og sætter VoiceRig til
+per-user autostart.
 
-```bash
-python -m venv .venv
-. .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -e ".[voice]"
-```
+`pyannote` community-1 kræver ved første model-download, at modelvilkårene er
+accepteret og at `HF_TOKEN` er sat. Når modellerne ligger lokalt, kører selve
+analysen lokalt.
 
-`pyannote` community-1 kræver ved første model-download, at modelvilkårene accepteres og at `HF_TOKEN` er sat. Når modellerne ligger lokalt, kører selve diarization lokalt.
+## Manuel udviklerinstallation
+
+Hovedmiljø og diarization-miljø må **ikke** flettes sammen. Se
+`docs/ARCHITECTURE.md` og `setup-windows.ps1` for den autoritative dependency-
+opdeling. En simpel `pip install -e ".[voice,diarization]"` er bevidst ikke en
+understøttet konfiguration.
 
 ## Start
 
-```bash
-voicerig
+```powershell
+.\start-windows.ps1
 ```
 
-Åbn derefter `http://127.0.0.1:8765`.
+UI åbner på `http://127.0.0.1:8765`.
 
 ## ModelRig
 
-Standardadresse er `http://127.0.0.1:8080`. Den kan ændres med:
+Når ModelRig er lokal, kopierer VoiceRig automatisk `.mrvoice` til
+`~/.kaliv/voices/` og gør den til default. ModelRig behøver ikke være startet,
+mens stemmen oprettes.
 
-```bash
-MODELRIG_BASE_URL=http://127.0.0.1:8080
-```
-
-Når ModelRig er lokal (standard), kopierer VoiceRig automatisk `.mrvoice` til `~/.kaliv/voices/` og gør den til default. ModelRig behøver derfor ikke være startet under oprettelsen. Et backend-importendpoint beholdes som fremtidig mulighed for split-host/remote installation.
+En prebuilt ModelRig-worker kan bruge VoiceRigs lokale TTS-sidecar på
+`127.0.0.1:8765`; en Python-worker med Chatterbox installeret kan også bruge
+`.mrvoice` in-process.
 
 ## Status
 
-Dette er første implementerede MVP-skelet. `.mrvoice`-pakning og reference-selection har automatiske tests. Fuld end-to-end voice generation kræver de tunge ML-modeller og skal hardwarevalideres på den rigtige rig.
+MVP-koden og package-/sidecar-/Windows-kontrakter er dækket af CI. Den sidste
+acceptgate er fysisk end-to-end validering med rigtige lyd-/videoklip på den
+faktiske rig: modeldownload, voice creation, peak VRAM, genereringstid,
+stemmelighed og ModelRig-afspilning.

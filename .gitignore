@@ -7,6 +7,8 @@ __pycache__/
 voicerig-data/
 validation-output/
 validation-report.json
+piper-fallback-report.json
+release-acceptance.json
 *.mrvoice
 *.wav
 *.mp3

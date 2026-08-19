@@ -15,6 +15,19 @@ _MODEL_LOAD_LOCK = threading.Lock()
 # RLock lets a higher-level voice-build transaction hold the GPU state stable
 # while the existing helpers keep their own defensive lock acquisition.
 _MODEL_RUN_LOCK = threading.RLock()
+# Identity of the conditionals currently resident in the shared mutable model.
+# Package runtime and profile creation both mutate the same `model.conds`, so
+# the cache key must live beside that state rather than in either caller.
+_CONDITIONING_KEY: tuple[str, ...] | None = None
+
+
+def _conditioning_key() -> tuple[str, ...] | None:
+    return _CONDITIONING_KEY
+
+
+def _set_conditioning_key(value: tuple[str, ...] | None) -> None:
+    global _CONDITIONING_KEY
+    _CONDITIONING_KEY = value
 
 
 def _shared_model():
@@ -33,6 +46,7 @@ def _shared_model():
                     device=device,
                     t3_model="v3",
                 )
+                _set_conditioning_key(None)
             except Exception as exc:  # pragma: no cover - model/runtime specific
                 raise ChatterboxUnavailable(
                     f"Chatterbox V3 kunne ikke indlæses på {device}."
@@ -62,6 +76,9 @@ class ChatterboxEngine:
             model.prepare_conditionals(str(reference_wav), exaggeration=0.5)
             if model.conds is None:
                 raise RuntimeError("Chatterbox oprettede ingen voice conditioning.")
+            # This is a transient build identity, deliberately distinct from any
+            # installed package key. Package runtime must reload after a build.
+            _set_conditioning_key(("build", str(reference_wav.resolve())))
             output.parent.mkdir(parents=True, exist_ok=True)
             model.conds.save(output)
         return output

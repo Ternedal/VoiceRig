@@ -16,7 +16,7 @@ if (-not (Test-Path $Python)) {
 }
 
 $ArgsList = @(
-    "-m", "voicerig.rig_validation",
+    "-m", "voicerig.acceptance_wrapper",
     "--name", $Name,
     "--voicerig-url", $VoiceRigUrl,
     "--modelrig-url", $ModelRigUrl,
@@ -37,9 +37,10 @@ if ($RequireModelRig) {
 
 Write-Host "VoiceRig fysisk rig-validering"
 if ($Source.Count -eq 0) {
-    Write-Host "Kører preflight: CUDA, VRAM, FFmpeg, verificerede modeller og speaker-runtime."
+    Write-Host "Kører preflight: clean Git checkout, CUDA, VRAM, FFmpeg, verificerede modeller og speaker-runtime."
 } else {
     Write-Host "Kører fuld produkt-E2E på $($Source.Count) mediefil(er)."
+    Write-Host "Acceptance kræver clean checkout og aktiv VoiceRig-service på samme Git HEAD."
     Write-Host "VoiceRig service: $VoiceRigUrl"
     if ($RequireModelRig) {
         Write-Host "ModelRig backend: $ModelRigUrl (Bearer-token kræves)"

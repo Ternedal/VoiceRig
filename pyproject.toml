@@ -24,10 +24,11 @@ dependencies = [
 voice = [
   "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2",
 ]
-# Current pyannote requires torch >=2.8, which is incompatible with Chatterbox's
-# 2.6 pin. It therefore runs in a separate CPU-only venv/process.
+# pyannote 4.0.7 requires a newer torch generation than Chatterbox. Keep the
+# verified version in a separate CPU-only venv/process so future pyannote
+# releases cannot silently change VoiceRig's diarization contract.
 diarization = [
-  "pyannote.audio>=4.0.7,<5",
+  "pyannote.audio==4.0.7",
 ]
 test = ["pytest>=8.0"]
 

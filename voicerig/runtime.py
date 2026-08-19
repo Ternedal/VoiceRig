@@ -140,6 +140,49 @@ def hardware_status() -> dict:
     return status
 
 
+def reset_cuda_peaks() -> bool:
+    """Reset peak VRAM counters in the VoiceRig process that owns Chatterbox."""
+    try:
+        import torch
+    except Exception:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    try:
+        torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        return False
+    return True
+
+
+def cuda_memory_stats() -> dict:
+    """Report current/peak CUDA memory for physical 12 GB acceptance evidence."""
+    empty = {
+        "available": False,
+        "allocated_gb": None,
+        "reserved_gb": None,
+        "peak_allocated_gb": None,
+        "peak_reserved_gb": None,
+    }
+    try:
+        import torch
+    except Exception:
+        return empty
+    if not torch.cuda.is_available():
+        return empty
+    gib = 1024 ** 3
+    try:
+        return {
+            "available": True,
+            "allocated_gb": round(torch.cuda.memory_allocated() / gib, 3),
+            "reserved_gb": round(torch.cuda.memory_reserved() / gib, 3),
+            "peak_allocated_gb": round(torch.cuda.max_memory_allocated() / gib, 3),
+            "peak_reserved_gb": round(torch.cuda.max_memory_reserved() / gib, 3),
+        }
+    except Exception:
+        return empty
+
+
 def voice_build_readiness() -> dict:
     """Return a human-readable preflight verdict without loading ML models.
 

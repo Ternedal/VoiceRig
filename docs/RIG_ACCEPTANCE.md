@@ -221,11 +221,13 @@ som **QUALITY FAIL**, ikke som software-PASS. Sammenhold den manuelle vurdering
 med `speaker_similarity.cosine`; denne første måling bliver udgangspunktet for
 senere kalibrering, ikke en efterrationaliseret tærskel.
 
-## 7. ModelRig end-to-end gennem backend
+## 7. ModelRig + automatisk Piper fallback
 
 Start den aktuelle ModelRig `main`, backend og worker som normalt. Final
-integration testes **ikke** direkte mod worker-port 8099: workeren er intern og
-loopback-only. Acceptance bruger ModelRigs autentificerede backend på port 8080.
+integration testes ikke direkte mod worker-port 8099; ModelRig-providerbeviset
+kommer fra den autentificerede backend på port 8080. Den lokale worker bruges
+kun bagefter til den målrettede Piper-syntesetest, fordi backend ikke har en
+separat ren TTS-route.
 
 Sæt token uden at skrive det ind i kommandohistorikken, fx i den aktuelle
 PowerShell-session:
@@ -234,37 +236,74 @@ PowerShell-session:
 $env:MODELRIG_TOKEN = "<dit parrede device-token>"
 ```
 
-Kør derefter:
+Den endelige automatiske rig-kommando er:
 
 ```powershell
 .\validate-rig.ps1 `
   -Source "C:\testdata\voice-01.mp4","C:\testdata\voice-02.m4a" `
   -Name "VoiceRig Acceptance" `
-  -RequireModelRig
+  -RequireModelRig `
+  -RequirePiperFallback
 ```
 
-Validatoren kalder:
+Før fallback-delen kræver validatoren via ModelRig-backenden:
 
 ```text
 GET http://127.0.0.1:8080/api/v1/health/full
 Authorization: Bearer <MODELRIG_TOKEN>
 ```
 
-Krav til ModelRig PASS:
+Krav til VoiceRig-provider PASS:
 
 - backend kan kontaktes og Bearer-token accepteres
 - `checks.tts.ok == true`
 - `checks.tts.provider == "voicerig"`
 - `checks.tts.package` er præcis den `.mrvoice`, acceptance netop byggede
-- VoiceRig TTS-sidecaren er dermed den provider, ModelRig selv har valgt
 
-Dette beviser den integrerede ModelRig-provider. Den separate Piper fallback-test
-skal stadig udføres ved at stoppe VoiceRig-sidecaren og verificere ModelRigs
-fallback-adfærd med den eksisterende Piper-stemme.
+Når den del er grøn, kører `test-piper-fallback.ps1` automatisk og fail-closed:
+
+1. identificerer den aktive VoiceRig-service via `/api/health`
+2. kræver clean service-checkout på samme Git SHA som acceptance-checkoutet
+3. stopper **kun** den verificerede VoiceRig-PID
+4. venter på at ModelRig-backenden skifter til `checks.tts.provider == "piper"`
+5. kalder ModelRig-worker **kun på loopback** `127.0.0.1:8099/voice/tts/synthesize`
+6. kræver at worker-resultatet siger `provider == "piper"`
+7. kræver at en rigtig RIFF/WAV bliver skrevet som `validation-output\piper-fallback.wav`
+8. genstarter VoiceRig i `finally`, også hvis Piper-testen fejler
+9. kræver at den genstartede service kører samme Git SHA og stadig er clean
+10. kræver at ModelRig-backenden skifter tilbage til `provider == "voicerig"`
+
+Fallback-testen nægter at bruge en ikke-loopback worker-URL. Hvis riggens interne
+worker bruger en anden loopback-port, kan den angives med `-ModelRigWorkerUrl`.
+
+Fallback-beviset skrives til:
+
+```text
+piper-fallback-report.json
+```
+
+Vigtige felter er:
+
+```text
+checkout_revision
+stopped_voicerig_pid
+fallback.provider
+piper_synthesis.provider
+piper_synthesis.output
+piper_synthesis.bytes
+piper_synthesis.riff
+restarted_service_pid
+restarted_service_revision
+restored.provider
+```
+
+En gyldig fallback-PASS kræver hele kæden **voicerig → piper + rigtig WAV →
+voicerig**. Dermed er et rent provider-skift ikke længere nok til at bestå.
 
 ## 8. Acceptance-record
 
-Følgende værdier kopieres fra `validation-report.json` til PR #1:
+Følgende værdier kopieres fra `validation-report.json` og
+`piper-fallback-report.json` til PR #1:
 
 - `source_evidence.checkout.revision`
 - `source_evidence.checkout.branch`
@@ -288,6 +327,11 @@ Følgende værdier kopieres fra `validation-report.json` til PR #1:
 - ModelRig TTS-provider
 - ModelRig aktiv package
 - manuel lydvurdering: PASS / QUALITY FAIL
+- `piper_synthesis.provider`
+- `piper_synthesis.output`
+- `piper_synthesis.riff`
+- `restarted_service_revision`
+- `restored.provider`
 - Piper fallback: PASS / FAIL
 
 ## Definition of Done
@@ -303,6 +347,6 @@ PR #1 må først gøres ready og merges, når:
 7. Peak VRAM holder sig inden for RTX 3060 12 GB uden OOM.
 8. Manuel lyttekontrol er PASS.
 9. ModelRig backend rapporterer VoiceRig som aktiv TTS-provider med korrekt package.
-10. Piper fallback er PASS.
+10. Piper fallback producerer en rigtig WAV og VoiceRig restore er PASS.
 
 Hvis ét punkt fejler, beholdes PR'en som draft og fejlen rettes på samme branch.

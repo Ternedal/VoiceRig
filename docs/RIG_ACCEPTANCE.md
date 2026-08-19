@@ -73,11 +73,17 @@ Krav til PASS:
 - `.mrvoice` oprettes og valideres
 - `reference.wav` oprettes
 - Chatterbox conditioning oprettes
-- preview genereres
+- preview genereres som PCM16 WAV
 - profilen installeres i `~/.kaliv/voices/`
-- testsyntese oprettes som `*-validation.wav`
+- testsyntese oprettes som PCM16 `*-validation.wav`
+- reference/preview/testsyntese passerer automatisk WAV-, varigheds- og audible-gate
 - ingen CUDA OOM
 - peak allocated/reserved VRAM registreres i rapporten
+- reference og testsyntese køres gennem pyannote igen for at rapportere speaker-embedding cosine
+
+`speaker_similarity.cosine` er **kun en måling** i MVP'en. Der er bevidst ingen
+hård tærskel endnu; den skal kalibreres mod rigtige danske reference/syntese-par,
+før den må påvirke PASS/FAIL.
 
 Artifacts ligger i:
 
@@ -104,7 +110,9 @@ Manuel acceptance kræver:
 - ingen alvorlig metallisk forvrængning, gentagelsesloop eller hallucineret tale
 
 Hvis stemmen er teknisk korrekt men ligheden er utilstrækkelig, registreres det
-som **QUALITY FAIL**, ikke som software-PASS.
+som **QUALITY FAIL**, ikke som software-PASS. Sammenhold den manuelle vurdering
+med `speaker_similarity.cosine`; denne første måling bliver udgangspunktet for
+senere kalibrering, ikke en efterrationaliseret tærskel.
 
 ## 6. ModelRig end-to-end
 
@@ -137,6 +145,8 @@ Følgende værdier kopieres fra `validation-report.json` til PR #1:
 - buildtid
 - syntesetid
 - `diarization_used`
+- `speaker_similarity.cosine` (informational, threshold = none)
+- syntese-WAV sample rate/duration/RMS
 - ModelRig `tts` capability
 - manuel lydvurdering: PASS / QUALITY FAIL
 

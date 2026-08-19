@@ -88,7 +88,7 @@ function renderSpeakerChoices(detail){
     const use=document.createElement('button');
     use.type='button';
     use.textContent='Brug denne stemme';
-    use.onclick=()=>submitBuild(speaker.choice);
+    use.onclick=()=>submitBuild(speaker.anchor);
     card.append(title,audio,use);
     grid.appendChild(card);
   }
@@ -101,16 +101,16 @@ function errorMessage(detail){
   return 'Ukendt fejl';
 }
 
-async function submitBuild(speakerChoice=null){
+async function submitBuild(speakerAnchor=null){
   building=true;
   render();
   clearStatus();
-  statusEl.textContent=speakerChoice===null?'Analyserer og opretter stemmen…':'Opretter stemmen fra dit valg…';
+  statusEl.textContent=speakerAnchor===null?'Analyserer og opretter stemmen…':'Opretter stemmen fra dit valg…';
   const fd=new FormData();
   fd.append('name',nameEl.value.trim());
   fd.append('language','da');
   fd.append('install_in_modelrig','true');
-  if(speakerChoice!==null) fd.append('speaker_choice',String(speakerChoice));
+  if(speakerAnchor!==null) fd.append('speaker_anchor',speakerAnchor);
   files.forEach(file=>fd.append('files',file));
   try{
     const response=await fetch('/api/voices',{method:'POST',body:fd});

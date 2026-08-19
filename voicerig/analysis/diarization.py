@@ -34,6 +34,15 @@ class DiarizationResult:
     speakers: tuple[Speaker, ...]
 
 
+@dataclass(frozen=True)
+class SpeakerCluster:
+    """One cross-file voice identity, ranked later by total speech duration."""
+
+    speakers: tuple[Speaker, ...]
+    duration: float
+    centroid: tuple[float, ...] | None
+
+
 class DiarizationUnavailable(RuntimeError):
     pass
 
@@ -91,12 +100,7 @@ def _parse_result(item: dict) -> DiarizationResult:
 
 
 def diarize_many(audios: list[Path]) -> list[DiarizationResult]:
-    """Run all files through one CPU-only pyannote subprocess/model load.
-
-    Chatterbox and current pyannote have incompatible torch requirements, so
-    diarization deliberately lives in `.venv-diarization`. This also ensures
-    pyannote cannot consume GPU VRAM that is reserved for voice generation.
-    """
+    """Run all files through one CPU-only pyannote subprocess/model load."""
     if not audios:
         return []
     worker = Path(__file__).with_name("pyannote_worker.py")
@@ -150,13 +154,7 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return dot / (na * nb)
 
 
-def _cluster_centroid(cluster: list[Speaker]) -> tuple[float, ...] | None:
-    """Duration-weighted embedding centroid for conservative speaker matching.
-
-    Comparing a new speaker with the cluster centroid avoids single-link
-    chaining, where A can match B and B can match C even though A and C are
-    clearly different people.
-    """
+def _cluster_centroid(cluster: list[Speaker] | tuple[Speaker, ...]) -> tuple[float, ...] | None:
     usable = [speaker for speaker in cluster if speaker.embedding is not None]
     if not usable:
         return None
@@ -172,33 +170,25 @@ def _cluster_centroid(cluster: list[Speaker]) -> tuple[float, ...] | None:
     )
 
 
-def _cluster_duration(cluster: list[Speaker]) -> float:
+def _cluster_duration(cluster: list[Speaker] | tuple[Speaker, ...]) -> float:
     return sum(max(0.0, speaker.duration) for speaker in cluster)
 
 
-def primary_speaker_segments(
+def speaker_clusters(
     results: list[DiarizationResult],
     similarity_threshold: float = 0.75,
-    minimum_dominance_ratio: float = 1.5,
-) -> dict[Path, list[Segment]]:
-    """Match speakers across files and return the clearly dominant person.
-
-    If two distinct voice clusters have similar total speaking time, guessing is
-    worse than asking for cleaner input. VoiceRig therefore auto-selects only
-    when the leading cluster is at least `minimum_dominance_ratio` times the
-    runner-up. A future UI can expose explicit speaker selection on this exact
-    ambiguity signal without changing the clustering contract.
-    """
+) -> tuple[SpeakerCluster, ...]:
+    """Return cross-file voice identities ranked by total speaking time."""
     nodes = [speaker for result in results for speaker in result.speakers if speaker.duration > 0]
     if not nodes:
-        return {}
+        return ()
 
-    clusters: list[list[Speaker]] = []
+    raw_clusters: list[list[Speaker]] = []
     for node in sorted(nodes, key=lambda s: s.duration, reverse=True):
         best_idx = None
         best_score = similarity_threshold
         if node.embedding is not None:
-            for idx, cluster in enumerate(clusters):
+            for idx, cluster in enumerate(raw_clusters):
                 centroid = _cluster_centroid(cluster)
                 if centroid is None:
                     continue
@@ -206,26 +196,60 @@ def primary_speaker_segments(
                 if score >= best_score:
                     best_score, best_idx = score, idx
         if best_idx is None:
-            clusters.append([node])
+            raw_clusters.append([node])
         else:
-            clusters[best_idx].append(node)
+            raw_clusters[best_idx].append(node)
 
-    ranked = sorted(clusters, key=_cluster_duration, reverse=True)
-    primary = ranked[0]
-    if len(ranked) > 1:
-        first = _cluster_duration(ranked[0])
-        second = _cluster_duration(ranked[1])
-        if second > 0.0 and first / second < max(1.0, minimum_dominance_ratio):
-            raise ValueError(
-                "Vi fandt flere omtrent lige tydelige stemmer i klippene. "
-                "Tilføj et klip med mere tale fra den person, du vil bruge, "
-                "eller fjern et klip hvor en anden person fylder meget."
-            )
+    clusters = [
+        SpeakerCluster(
+            speakers=tuple(cluster),
+            duration=_cluster_duration(cluster),
+            centroid=_cluster_centroid(cluster),
+        )
+        for cluster in raw_clusters
+    ]
+    return tuple(sorted(clusters, key=lambda cluster: cluster.duration, reverse=True))
 
-    selected = {(s.source, s.label) for s in primary}
+
+def segments_for_cluster(
+    results: list[DiarizationResult],
+    cluster: SpeakerCluster,
+) -> dict[Path, list[Segment]]:
+    selected = {(speaker.source, speaker.label) for speaker in cluster.speakers}
     by_source: dict[Path, list[Segment]] = {}
     for result in results:
         matches = [seg for seg in result.segments if (result.source, seg.speaker) in selected]
         if matches:
             by_source[result.source] = matches
     return by_source
+
+
+def primary_speaker_segments(
+    results: list[DiarizationResult],
+    similarity_threshold: float = 0.75,
+    minimum_dominance_ratio: float = 1.5,
+    speaker_choice: int | None = None,
+) -> dict[Path, list[Segment]]:
+    """Return the clearly dominant identity or an explicitly selected rank.
+
+    `speaker_choice` is 1-based and maps to `speaker_clusters()` duration ranking.
+    This makes the rare ambiguous-speaker UI deterministic for a repeated build
+    request with the same files.
+    """
+    clusters = speaker_clusters(results, similarity_threshold=similarity_threshold)
+    if not clusters:
+        return {}
+
+    if speaker_choice is not None:
+        if speaker_choice < 1 or speaker_choice > len(clusters):
+            raise ValueError("Den valgte stemme findes ikke længere i materialet.")
+        return segments_for_cluster(results, clusters[speaker_choice - 1])
+
+    if len(clusters) > 1:
+        first = clusters[0].duration
+        second = clusters[1].duration
+        if second > 0.0 and first / second < max(1.0, minimum_dominance_ratio):
+            raise ValueError(
+                "Vi fandt flere omtrent lige tydelige stemmer i klippene."
+            )
+    return segments_for_cluster(results, clusters[0])

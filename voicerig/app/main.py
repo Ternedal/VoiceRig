@@ -5,9 +5,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from voicerig.app.netguard import allow_lan, is_loopback_client
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired, create_voice
 from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
@@ -21,6 +22,29 @@ app = FastAPI(title="VoiceRig", version="0.1.0")
 app.include_router(tts_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
+
+
+@app.middleware("http")
+async def _loopback_only(request: Request, call_next):
+    """Keep the unauthenticated voice/build surface local even if mis-bound.
+
+    `run()` already binds 127.0.0.1. This request-level guard is the second
+    boundary: starting the ASGI app manually with `--host 0.0.0.0` must not
+    silently expose voice profiles, cloning or synthesis to the LAN.
+    """
+    if not allow_lan():
+        peer = request.client.host if request.client else None
+        if not is_loopback_client(peer):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "detail": (
+                        "VoiceRig er loopback-only. Sæt VOICERIG_ALLOW_LAN=1 kun hvis "
+                        "du bevidst vil eksponere servicen uden for denne maskine."
+                    )
+                },
+            )
+    return await call_next(request)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -87,16 +111,30 @@ def build_voice(
                     while chunk := upload.file.read(1024 * 1024):
                         total_size += len(chunk)
                         if total_size > limit:
-                            raise HTTPException(status_code=413, detail=f"De samlede uploads overstiger grænsen på {max_upload_mb()} MB.")
+                            raise HTTPException(
+                                status_code=413,
+                                detail=f"De samlede uploads overstiger grænsen på {max_upload_mb()} MB.",
+                            )
                         f.write(chunk)
                 sources.append(target)
 
             try:
-                result = create_voice(name, sources, out_dir, language=language, speaker_choice=speaker_choice, speaker_anchor=speaker_anchor)
+                result = create_voice(
+                    name,
+                    sources,
+                    out_dir,
+                    language=language,
+                    speaker_choice=speaker_choice,
+                    speaker_anchor=speaker_anchor,
+                )
             except SpeakerSelectionRequired as exc:
                 raise HTTPException(
                     status_code=409,
-                    detail={"code": "speaker_selection_required", "message": str(exc), "speakers": exc.choices},
+                    detail={
+                        "code": "speaker_selection_required",
+                        "message": str(exc),
+                        "speakers": exc.choices,
+                    },
                 ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -118,7 +156,11 @@ def build_voice(
     manifest = validate_package(result.package)
     return {
         "ok": True,
-        "voice": {"id": manifest["id"], "name": manifest["name"], "language": manifest["language"]},
+        "voice": {
+            "id": manifest["id"],
+            "name": manifest["name"],
+            "language": manifest["language"],
+        },
         "package": result.package.name,
         "download_url": f"/api/packages/{result.package.name}",
         "installed_in_modelrig": installed,
@@ -143,4 +185,5 @@ def download_package(filename: str):
 
 def run() -> None:
     import uvicorn
+
     uvicorn.run("voicerig.app.main:app", host="127.0.0.1", port=8765, reload=False)

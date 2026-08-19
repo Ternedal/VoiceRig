@@ -34,8 +34,19 @@ git status --short
 git rev-parse HEAD
 ```
 
-`git status --short` skal være tom. Notér HEAD sammen med acceptance-resultatet,
-så den fysiske PASS kan bindes til den samme commit som GitHub CI.
+`git status --short` skal være tom. `validate-rig.ps1` kontrollerer dette igen
+maskinelt og nægter fysisk acceptance på et dirty checkout.
+
+Den eksakte checkout-identitet skrives automatisk til:
+
+```text
+source_evidence.checkout.revision
+source_evidence.checkout.branch
+source_evidence.checkout.dirty
+```
+
+i `validation-report.json`. Der er derfor ikke længere et manuelt “notér HEAD”-
+trin i acceptance-beviset.
 
 ## 2. Installation / opdatering
 
@@ -65,6 +76,10 @@ Ved første pyannote-download skal community-1-vilkårene være accepteret på
 Hugging Face, og et læse-token kan sættes som `HF_TOKEN` i repoets `.env`.
 VoiceRig loader `.env` selv; eksisterende Windows/session-env vinder over filen.
 
+Ved opdatering genstarter setup en allerede kørende VoiceRig-proces og kræver,
+at den nye service rapporterer checkoutets aktuelle Git HEAD. Dermed må gammel
+kode i RAM ikke bestå acceptance efter et `git pull`.
+
 ## 3. Preflight
 
 ```powershell
@@ -74,6 +89,8 @@ VoiceRig loader `.env` selv; eksisterende Windows/session-env vinder over filen.
 Krav til PASS:
 
 - `VoiceRig rig-validation: PASS`
+- checkout er clean
+- checkout revision kan aflæses fra Git
 - GPU er RTX 3060 eller den faktiske 12 GB target-GPU
 - registreret VRAM er mindst 11 GiB
 - Chatterbox device er `cuda`
@@ -89,6 +106,9 @@ Resultatet skrives til:
 validation-report.json
 ```
 
+Preflight-rapporten indeholder mindst checkout-identiteten under
+`source_evidence.checkout`.
+
 ## 4. Start den rigtige VoiceRig-service
 
 ```powershell
@@ -101,8 +121,25 @@ Fuld acceptance forventer den normale loopback-service på:
 http://127.0.0.1:8765
 ```
 
-Validatoren kalder `/api/readiness` og stopper, hvis service-processens egen
-readiness ikke er grøn.
+Ved fuld E2E kalder acceptance-wrapperen `/api/readiness` **før** ML-arbejdet og
+kræver:
+
+- service svarer
+- service rapporterer Git source revision
+- service checkout er clean
+- service revision er identisk med det checkout, validatoren selv kører fra
+
+Hvis et af disse punkter fejler, stopper acceptance på `stage=source-identity`
+før voice-build. Rapporten indeholder:
+
+```text
+source_evidence.checkout
+source_evidence.service.pid
+source_evidence.service.source
+source_evidence.same_revision
+```
+
+`source_evidence.same_revision` skal være `true` ved en gyldig fysisk E2E.
 
 ## 5. Fuld produkt-E2E
 
@@ -115,18 +152,19 @@ referenceudvælgelse bliver testet.
   -Name "VoiceRig Acceptance"
 ```
 
-Kørslen gør nu følgende over HTTP mod den rigtige VoiceRig-service:
+Kørslen gør følgende over HTTP mod den rigtige VoiceRig-service:
 
-1. uploader mediefiler til `/api/voices`
-2. kræver rigtig pyannote diarization
-3. bygger og installerer `.mrvoice`
-4. downloader pakken igen gennem `/api/packages/...`
-5. validerer package/checksums
-6. udtrækker og validerer `reference.wav`
-7. syntetiserer dansk via `/api/tts/synthesize`
-8. validerer den returnerede PCM16 WAV
-9. aflæser peak VRAM fra den **samme serverproces**
-10. kører reference + syntese gennem pyannote til en informativ similarity-måling
+1. beviser clean checkout + aktiv service på samme Git HEAD
+2. uploader mediefiler til `/api/voices`
+3. kræver rigtig pyannote diarization
+4. bygger og installerer `.mrvoice`
+5. downloader pakken igen gennem `/api/packages/...`
+6. validerer package/checksums
+7. udtrækker og validerer `reference.wav`
+8. syntetiserer dansk via `/api/tts/synthesize`
+9. validerer den returnerede PCM16 WAV
+10. aflæser peak VRAM fra den **samme serverproces**
+11. kører reference + syntese gennem pyannote til en informativ similarity-måling
 
 Hvis materialet er reelt tvetydigt og produktet returnerer speaker-picker, fejler
 den automatiske acceptance med en tydelig besked. Det er ikke et produktproblem:
@@ -135,6 +173,9 @@ bruge materiale, hvor den tilsigtede person kan identificeres entydigt.
 
 Krav til PASS:
 
+- `source_evidence.checkout.dirty == false`
+- `source_evidence.service.source.dirty == false`
+- `source_evidence.same_revision == true`
 - `diarization_used=true`
 - `.mrvoice` oprettes, kan downloades og valideres
 - `reference.wav` er gyldig og hørbar
@@ -225,7 +266,13 @@ fallback-adfærd med den eksisterende Piper-stemme.
 
 Følgende værdier kopieres fra `validation-report.json` til PR #1:
 
-- commit SHA
+- `source_evidence.checkout.revision`
+- `source_evidence.checkout.branch`
+- `source_evidence.checkout.dirty`
+- `source_evidence.service.pid`
+- `source_evidence.service.source.revision`
+- `source_evidence.service.source.dirty`
+- `source_evidence.same_revision`
 - GPU-navn
 - total/fri VRAM før build
 - `gpu.after_build.peak_allocated_gb`
@@ -247,13 +294,15 @@ Følgende værdier kopieres fra `validation-report.json` til PR #1:
 
 PR #1 må først gøres ready og merges, når:
 
-1. GitHub CI er grøn på samme commit som den fysiske kandidat.
-2. Setup model-warmup er PASS.
-3. Preflight er PASS.
-4. Fuld HTTP-baseret VoiceRig product-E2E er PASS.
-5. Peak VRAM holder sig inden for RTX 3060 12 GB uden OOM.
-6. Manuel lyttekontrol er PASS.
-7. ModelRig backend rapporterer VoiceRig som aktiv TTS-provider med korrekt package.
-8. Piper fallback er PASS.
+1. GitHub CI er grøn på samme commit som `source_evidence.checkout.revision`.
+2. Fysisk checkout er clean.
+3. Aktiv VoiceRig-service er clean og kører samme revision (`same_revision=true`).
+4. Setup model-warmup er PASS.
+5. Preflight er PASS.
+6. Fuld HTTP-baseret VoiceRig product-E2E er PASS.
+7. Peak VRAM holder sig inden for RTX 3060 12 GB uden OOM.
+8. Manuel lyttekontrol er PASS.
+9. ModelRig backend rapporterer VoiceRig som aktiv TTS-provider med korrekt package.
+10. Piper fallback er PASS.
 
 Hvis ét punkt fejler, beholdes PR'en som draft og fejlen rettes på samme branch.

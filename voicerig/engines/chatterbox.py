@@ -65,6 +65,13 @@ class ChatterboxEngine:
         return output
 
     def preview(self, reference_wav: Path, output: Path) -> Path:
+        """Generate preview from the conditionals prepared immediately before it.
+
+        `reference_wav` remains in the signature to keep the engine call stable,
+        but passing it to Chatterbox.generate would call prepare_conditionals a
+        second time. The normal build contract is build_conditioning -> preview.
+        """
+        del reference_wav
         try:
             import torchaudio as ta
         except Exception as exc:  # pragma: no cover
@@ -72,10 +79,11 @@ class ChatterboxEngine:
         model = _shared_model()
         text = "Hej. Dette er en prøve på den nye stemme i ModelRig."
         with _MODEL_RUN_LOCK:
+            if model.conds is None:
+                raise RuntimeError("Preview kræver forberedt voice conditioning.")
             wav = model.generate(
                 text,
                 language_id=self.language,
-                audio_prompt_path=str(reference_wav),
                 exaggeration=0.5,
                 cfg_weight=0.5,
                 temperature=0.8,

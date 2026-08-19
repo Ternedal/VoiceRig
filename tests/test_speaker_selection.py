@@ -7,7 +7,13 @@ from pathlib import Path
 import pytest
 
 import voicerig.app.pipeline as pipeline
-from voicerig.analysis.diarization import DiarizationResult, Segment, Speaker
+from voicerig.analysis.diarization import (
+    DiarizationResult,
+    Segment,
+    Speaker,
+    segments_for_cluster,
+    speaker_clusters,
+)
 
 
 def _write_tone(path: Path, seconds: float = 12.0, rate: int = 24000):
@@ -64,11 +70,23 @@ def test_ambiguous_build_returns_two_playable_choices_before_loading_chatterbox(
 
     choices = caught.value.choices
     assert [item["choice"] for item in choices] == [1, 2]
+    assert [item["anchor"] for item in choices] == ["0:3.000", "0:9.000"]
     assert all(item["speech_seconds"] == 6.0 for item in choices)
     for item in choices:
         raw = base64.b64decode(item["preview_wav_base64"], validate=True)
         assert raw[:4] == b"RIFF"
         assert len(raw) > 1000
+
+
+def test_speech_anchor_resolves_the_same_voice_without_using_rank():
+    wav = Path("source_00.wav")
+    results = _ambiguous_results([wav])
+    clusters = speaker_clusters(results)
+
+    chosen = pipeline._cluster_from_anchor([wav], results, clusters, "0:9.000")
+    segments = segments_for_cluster(results, chosen)[wav]
+
+    assert [segment.speaker for segment in segments] == ["B"]
 
 
 def test_explicit_choice_builds_selected_voice_without_ambiguity_loop(tmp_path: Path, monkeypatch):
@@ -93,7 +111,7 @@ def test_explicit_choice_builds_selected_voice_without_ambiguity_loop(tmp_path: 
         "Valgt stemme",
         [source],
         tmp_path / "out",
-        speaker_choice=2,
+        speaker_anchor="0:9.000",
     )
 
     assert result.diarization_used is True

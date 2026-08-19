@@ -2,7 +2,9 @@ param(
     [string[]]$Source = @(),
     [string]$Name = "VoiceRig Validation",
     [switch]$RequireModelRig,
-    [string]$ModelRigUrl = "http://127.0.0.1:8099"
+    [string]$VoiceRigUrl = "http://127.0.0.1:8765",
+    [string]$ModelRigUrl = "http://127.0.0.1:8080",
+    [string]$ModelRigToken = $env:MODELRIG_TOKEN
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,11 +18,15 @@ if (-not (Test-Path $Python)) {
 $ArgsList = @(
     "-m", "voicerig.rig_validation",
     "--name", $Name,
+    "--voicerig-url", $VoiceRigUrl,
     "--modelrig-url", $ModelRigUrl,
     "--report", (Join-Path $PSScriptRoot "validation-report.json"),
     "--output-dir", (Join-Path $PSScriptRoot "validation-output")
 )
 
+if ($ModelRigToken) {
+    $ArgsList += @("--modelrig-token", $ModelRigToken)
+}
 foreach ($Item in $Source) {
     $Resolved = Resolve-Path -LiteralPath $Item -ErrorAction Stop
     $ArgsList += @("--source", $Resolved.Path)
@@ -31,9 +37,13 @@ if ($RequireModelRig) {
 
 Write-Host "VoiceRig fysisk rig-validering"
 if ($Source.Count -eq 0) {
-    Write-Host "Kører preflight: CUDA, VRAM, FFmpeg, Chatterbox og speaker-runtime."
+    Write-Host "Kører preflight: CUDA, VRAM, FFmpeg, verificerede modeller og speaker-runtime."
 } else {
-    Write-Host "Kører fuld E2E på $($Source.Count) mediefil(er)."
+    Write-Host "Kører fuld produkt-E2E på $($Source.Count) mediefil(er)."
+    Write-Host "VoiceRig service: $VoiceRigUrl"
+    if ($RequireModelRig) {
+        Write-Host "ModelRig backend: $ModelRigUrl (Bearer-token kræves)"
+    }
     Write-Host "Output gemmes i .\validation-output"
 }
 Write-Host ""

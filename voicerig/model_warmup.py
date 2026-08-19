@@ -3,11 +3,19 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from voicerig.analysis.diarization import _worker_python
-from voicerig.config import load_local_env
+from voicerig.config import data_dir, load_local_env
 from voicerig.engines.chatterbox import _shared_model
+from voicerig.model_contract import (
+    CHATTERBOX_ENGINE,
+    CHATTERBOX_MODEL,
+    CHATTERBOX_SOURCE_REVISION,
+    MODEL_READINESS_SCHEMA,
+    PYANNOTE_MODEL_ID,
+)
 
 _READY_MARKER = "VOICERIG_DIARIZATION_READY="
 
@@ -23,8 +31,9 @@ def warm_chatterbox() -> dict:
         raise RuntimeError("Den installerede Chatterbox-kode understøtter ikke dansk V3.")
     return {
         "ok": True,
-        "engine": "chatterbox-multilingual",
-        "model": "v3",
+        "engine": CHATTERBOX_ENGINE,
+        "model": CHATTERBOX_MODEL,
+        "revision": CHATTERBOX_SOURCE_REVISION,
         "language": "da",
         "device": str(getattr(model, "device", "unknown")),
         "sample_rate": int(getattr(model, "sr", 0) or 0),
@@ -65,9 +74,28 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
         payload = json.loads(line[len(_READY_MARKER):])
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeError("pyannote-worker returnerede ugyldigt warmup-resultat.") from exc
-    if not payload.get("ok"):
-        raise RuntimeError("pyannote-worker rapporterede, at modellen ikke er klar.")
+    if not payload.get("ok") or payload.get("model") != PYANNOTE_MODEL_ID:
+        raise RuntimeError("pyannote-worker rapporterede en uventet modelkontrakt.")
     return payload
+
+
+def _write_readiness_marker(report: dict) -> Path:
+    marker = data_dir() / "model-readiness.json"
+    payload = {
+        "schema": MODEL_READINESS_SCHEMA,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "chatterbox": {
+            "engine": CHATTERBOX_ENGINE,
+            "model": CHATTERBOX_MODEL,
+            "revision": CHATTERBOX_SOURCE_REVISION,
+        },
+        "diarization": {"model": PYANNOTE_MODEL_ID},
+        "warmup": report,
+    }
+    temp = marker.with_suffix(marker.suffix + ".tmp")
+    temp.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(temp, marker)
+    return marker
 
 
 def warm_models() -> dict:
@@ -77,7 +105,10 @@ def warm_models() -> dict:
     load_local_env()
     chatterbox = warm_chatterbox()
     diarization = warm_diarization()
-    return {"ok": True, "chatterbox": chatterbox, "diarization": diarization}
+    report = {"ok": True, "chatterbox": chatterbox, "diarization": diarization}
+    marker = _write_readiness_marker(report)
+    report["readiness_marker"] = str(marker)
+    return report
 
 
 def main() -> int:

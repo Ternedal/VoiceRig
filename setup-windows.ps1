@@ -27,9 +27,22 @@ if (-not (Test-Path ".venv")) {
 
 & .\.venv\Scripts\python.exe -m pip install --upgrade pip
 & .\.venv\Scripts\python.exe -m pip install -e ".[voice]"
+& .\install-autostart.ps1
+
+function Test-VoiceRig {
+    try {
+        $r = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
+        return ($r.ok -eq $true)
+    } catch {
+        return $false
+    }
+}
+if (-not (Test-VoiceRig)) {
+    Start-Process -FilePath (Resolve-Path ".venv\Scripts\voicerig.exe").Path -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+}
 
 Write-Host ""
-Write-Host "VoiceRig er installeret."
+Write-Host "VoiceRig er installeret og sat til autostart for din Windows-bruger."
 Write-Host "Standard GPU-plan: Chatterbox bruger CUDA; pyannote bruger CPU for at spare VRAM."
 Write-Host "Hvis pyannote-modellen ikke er hentet endnu, sæt HF_TOKEN før første speaker-analyse."
-Write-Host "Start med: .\start-windows.ps1"
+Write-Host "Åbn VoiceRig med: .\start-windows.ps1"

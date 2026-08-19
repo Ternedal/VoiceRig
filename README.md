@@ -81,6 +81,38 @@ En prebuilt ModelRig-worker kan bruge VoiceRigs lokale TTS-sidecar på
 `127.0.0.1:8765`; en Python-worker med Chatterbox installeret kan også bruge
 `.mrvoice` in-process.
 
+## Fysisk rig-validering
+
+Efter installation kan miljøet kontrolleres uden at bygge en stemme:
+
+```powershell
+.\validate-rig.ps1
+```
+
+Preflight kontrollerer CUDA, GPU/VRAM, FFmpeg, Git, Chatterbox/torchaudio og den
+separate CPU-runtime til speaker-analyse. Resultatet gemmes i
+`validation-report.json`.
+
+Den fulde accepttest bruger et eller flere rigtige lyd-/videoklip:
+
+```powershell
+.\validate-rig.ps1 -Source "C:\klip\stemme1.mp4","C:\klip\stemme2.m4a"
+```
+
+Den fulde test bygger en `.mrvoice`, kræver at speaker-diarization faktisk blev
+brugt, installerer profilen lokalt, laver en dansk testsyntese og måler buildtid,
+syntesetid samt peak allocated/reserved VRAM. Output gemmes i
+`validation-output\`.
+
+Hvis ModelRig-workeren også skal være en hård del af accepttesten:
+
+```powershell
+.\validate-rig.ps1 -Source "C:\klip\stemme1.mp4" -RequireModelRig
+```
+
+I den tilstand skal `http://127.0.0.1:8099/capabilities` være tilgængelig og
+rapportere `tts=true`, ellers fejler valideringen.
+
 ## Status
 
 MVP-koden og package-/sidecar-/Windows-kontrakter er dækket af CI. Den sidste

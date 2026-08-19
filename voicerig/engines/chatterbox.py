@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from voicerig.model_contract import CHATTERBOX_MODEL
 from voicerig.runtime import chatterbox_device
 
 
@@ -44,12 +45,12 @@ def _shared_model():
             try:
                 _MODELS[device] = ChatterboxMultilingualTTS.from_pretrained(
                     device=device,
-                    t3_model="v3",
+                    t3_model=CHATTERBOX_MODEL,
                 )
                 _set_conditioning_key(None)
             except Exception as exc:  # pragma: no cover - model/runtime specific
                 raise ChatterboxUnavailable(
-                    f"Chatterbox V3 kunne ikke indlæses på {device}."
+                    f"Chatterbox {CHATTERBOX_MODEL.upper()} kunne ikke indlæses på {device}."
                 ) from exc
         return _MODELS[device]
 

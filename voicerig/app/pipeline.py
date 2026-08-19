@@ -8,7 +8,7 @@ from pathlib import Path
 from voicerig.analysis.diarization import DiarizationUnavailable, diarize_many, primary_speaker_segments
 from voicerig.analysis.reference import select_reference
 from voicerig.engines.chatterbox import ChatterboxEngine
-from voicerig.media.ffmpeg import cut_wav, extract_mono_wav
+from voicerig.media.ffmpeg import cut_wav, extract_mono_wav, stitch_wav_segments
 from voicerig.profiles.package import build_package, slugify
 
 
@@ -57,7 +57,10 @@ def create_voice(name: str, sources: list[Path], output_dir: Path, language: str
 
         candidate = select_reference(wavs, diarizations)
         reference = work / "reference.wav"
-        cut_wav(candidate.source, reference, candidate.start, candidate.duration)
+        if candidate.parts:
+            stitch_wav_segments(candidate.source, reference, list(candidate.parts))
+        else:
+            cut_wav(candidate.source, reference, candidate.start, candidate.duration)
 
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"

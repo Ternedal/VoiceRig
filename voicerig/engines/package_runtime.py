@@ -14,6 +14,11 @@ from voicerig.engines.chatterbox import (
     _set_conditioning_key,
     _shared_model,
 )
+from voicerig.model_contract import (
+    CHATTERBOX_ENGINE,
+    CHATTERBOX_MODEL,
+    CHATTERBOX_SOURCE_REVISION,
+)
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import chatterbox_device
 
@@ -89,19 +94,53 @@ def _materialize(package: Path, manifest: dict) -> Path:
     return root
 
 
+def _runtime_engine(manifest: dict) -> dict:
+    engine = manifest.get("engine") or {}
+    if engine.get("name") != CHATTERBOX_ENGINE or engine.get("model") != CHATTERBOX_MODEL:
+        raise RuntimeError(
+            f"Denne VoiceRig-runtime understøtter kun {CHATTERBOX_ENGINE}/{CHATTERBOX_MODEL}."
+        )
+    return engine
+
+
+def _package_conditioning_key(package: Path, manifest: dict, device: str) -> tuple[str, ...]:
+    stat = package.stat()
+    engine = manifest.get("engine") or {}
+    return (
+        "package",
+        str(manifest["id"]),
+        str(engine.get("revision") or "legacy"),
+        str(package.resolve()),
+        str(stat.st_mtime_ns),
+        str(stat.st_size),
+        device,
+    )
+
+
 def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> None:
-    key = ("package", str(manifest["id"]), device)
+    engine = _runtime_engine(manifest)
+    key = _package_conditioning_key(package, manifest, device)
     with _ACTIVE_LOCK:
         if _conditioning_key() == key and model.conds is not None:
             return
         cache = _materialize(package, manifest)
-        try:
-            from chatterbox.mtl_tts import Conditionals
-            model.conds = Conditionals.load(
-                cache / "conditioning.pt",
-                map_location=device,
-            ).to(device)
-        except Exception:
+        # `conditioning.pt` is a serialized model-specific optimization. Only
+        # load it directly when the package records the exact source revision
+        # running now. Older/future packages remain portable via reference.wav.
+        can_load_serialized = engine.get("revision") == CHATTERBOX_SOURCE_REVISION
+        if can_load_serialized:
+            try:
+                from chatterbox.mtl_tts import Conditionals
+                model.conds = Conditionals.load(
+                    cache / "conditioning.pt",
+                    map_location=device,
+                ).to(device)
+            except Exception:
+                model.conds = None
+        else:
+            model.conds = None
+
+        if model.conds is None:
             model.prepare_conditionals(str(cache / "reference.wav"), exaggeration=0.5)
             if model.conds is None:
                 raise RuntimeError("Chatterbox kunne ikke oprette conditioning fra reference.wav")
@@ -110,6 +149,7 @@ def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> N
 
 def synthesize(package: Path, text: str, output: Path) -> dict:
     manifest = _manifest(package)
+    _runtime_engine(manifest)
     device = chatterbox_device()
     model = _shared_model()
     defaults = manifest.get("defaults") or {}
@@ -145,6 +185,7 @@ def status() -> dict:
     try:
         package = resolve_package()
         manifest = _manifest(package)
+        _runtime_engine(manifest)
     except Exception as exc:
         return {"ok": False, "detail": str(exc), "voice": None, "package": None}
 

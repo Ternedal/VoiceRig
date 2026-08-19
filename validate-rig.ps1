@@ -2,6 +2,7 @@ param(
     [string[]]$Source = @(),
     [string]$Name = "VoiceRig Validation",
     [switch]$RequireModelRig,
+    [switch]$RequirePiperFallback,
     [string]$VoiceRigUrl = "http://127.0.0.1:8765",
     [string]$ModelRigUrl = "http://127.0.0.1:8080",
     [string]$ModelRigToken = $env:MODELRIG_TOKEN
@@ -13,6 +14,15 @@ Set-Location $PSScriptRoot
 $Python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
     throw "VoiceRig-miljøet findes ikke. Kør .\setup-windows.ps1 først."
+}
+if ($RequirePiperFallback -and $Source.Count -eq 0) {
+    throw "-RequirePiperFallback kræver en fuld E2E-kørsel med mindst én -Source."
+}
+if ($RequirePiperFallback -and -not $RequireModelRig) {
+    throw "-RequirePiperFallback kræver også -RequireModelRig."
+}
+if (($RequireModelRig -or $RequirePiperFallback) -and -not $ModelRigToken) {
+    throw "MODELRIG_TOKEN mangler. Sæt token i sessionen eller brug -ModelRigToken."
 }
 
 $ArgsList = @(
@@ -45,6 +55,9 @@ if ($Source.Count -eq 0) {
     if ($RequireModelRig) {
         Write-Host "ModelRig backend: $ModelRigUrl (Bearer-token kræves)"
     }
+    if ($RequirePiperFallback) {
+        Write-Host "Piper fallback: kræves; VoiceRig stoppes kortvarigt og genstartes automatisk i try/finally."
+    }
     Write-Host "Output gemmes i .\validation-output"
 }
 Write-Host ""
@@ -52,10 +65,25 @@ Write-Host ""
 & $Python @ArgsList
 $Code = $LASTEXITCODE
 
+if ($Code -eq 0 -and $RequirePiperFallback) {
+    Write-Host ""
+    Write-Host "Kører automatisk Piper fallback + VoiceRig restore..."
+    & (Join-Path $PSScriptRoot "test-piper-fallback.ps1") `
+        -VoiceRigUrl $VoiceRigUrl `
+        -ModelRigUrl $ModelRigUrl `
+        -ModelRigToken $ModelRigToken `
+        -Report (Join-Path $PSScriptRoot "piper-fallback-report.json")
+    $Code = $LASTEXITCODE
+}
+
 Write-Host ""
 if ($Code -eq 0) {
-    Write-Host "VoiceRig-valideringen bestod."
+    if ($RequirePiperFallback) {
+        Write-Host "VoiceRig-valideringen bestod inkl. ModelRig og Piper fallback."
+    } else {
+        Write-Host "VoiceRig-valideringen bestod."
+    }
 } else {
-    Write-Host "VoiceRig-valideringen fandt en blocker. Se validation-report.json."
+    Write-Host "VoiceRig-valideringen fandt en blocker. Se validation-report.json og evt. piper-fallback-report.json."
 }
 exit $Code

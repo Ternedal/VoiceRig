@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import uuid
 import zipfile
@@ -95,13 +96,23 @@ def build_package(
     for idx, alt in enumerate(alternatives[:5], start=1):
         files.append((alt, f"references/candidate_{idx:02d}.wav"))
     checksums = {arc: sha256(src) for src, arc in files}
+
     output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("manifest.json", json.dumps(asdict(manifest), ensure_ascii=False, indent=2))
-        zf.writestr("checksums.json", json.dumps(checksums, indent=2))
-        for src, arc in files:
-            zf.write(src, arc)
-    validate_package(output)
+    temp = output.with_name(output.name + ".tmp")
+    temp.unlink(missing_ok=True)
+    try:
+        with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "manifest.json",
+                json.dumps(asdict(manifest), ensure_ascii=False, indent=2),
+            )
+            zf.writestr("checksums.json", json.dumps(checksums, indent=2))
+            for src, arc in files:
+                zf.write(src, arc)
+        validate_package(temp)
+        os.replace(temp, output)
+    finally:
+        temp.unlink(missing_ok=True)
     return output
 
 
@@ -172,7 +183,9 @@ def _validate_manifest(manifest) -> dict:
 
     voice_id = _nonempty_string(manifest.get("id"), "id", 160)
     if not _VOICE_ID.fullmatch(voice_id):
-        raise ValueError("Manifestets id er ugyldigt; brug kun lowercase bogstaver, tal, æøå, _ og -.")
+        raise ValueError(
+            "Manifestets id er ugyldigt; brug kun lowercase bogstaver, tal, æøå, _ og -."
+        )
     _nonempty_string(manifest.get("name"), "name", 160)
     language = _nonempty_string(manifest.get("language"), "language", 16)
     if not _LANGUAGE.fullmatch(language):

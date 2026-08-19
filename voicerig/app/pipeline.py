@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -56,8 +57,46 @@ def _preview_parts(segments, target_s: float = 4.0) -> list[tuple[float, float]]
     return selected
 
 
+def _speaker_anchor(wavs: list[Path], source: Path, segments) -> str:
+    """Stable-enough hidden UI anchor: input index + midpoint of a clean turn."""
+    try:
+        source_index = wavs.index(source)
+    except ValueError as exc:
+        raise ValueError("Speaker-preview peger på en ukendt inputfil.") from exc
+    anchor_segment = max(segments, key=lambda item: item.duration)
+    midpoint = anchor_segment.start + anchor_segment.duration / 2.0
+    return f"{source_index}:{midpoint:.3f}"
+
+
+def _cluster_from_anchor(
+    wavs: list[Path],
+    results: list[DiarizationResult],
+    clusters: tuple[SpeakerCluster, ...],
+    anchor: str,
+) -> SpeakerCluster:
+    try:
+        raw_index, raw_time = anchor.split(":", 1)
+        source_index = int(raw_index)
+        timestamp = float(raw_time)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("Stemmevalget er ugyldigt. Vælg stemmen igen.") from exc
+    if source_index < 0 or source_index >= len(wavs) or not math.isfinite(timestamp) or timestamp < 0.0:
+        raise ValueError("Stemmevalget er ugyldigt. Vælg stemmen igen.")
+
+    target = wavs[source_index]
+    matches: list[SpeakerCluster] = []
+    for cluster in clusters:
+        segments = segments_for_cluster(results, cluster).get(target, [])
+        if any(segment.start - 0.15 <= timestamp <= segment.end + 0.15 for segment in segments):
+            matches.append(cluster)
+    if len(matches) != 1:
+        raise ValueError("VoiceRig kunne ikke genfinde den valgte stemme sikkert. Vælg stemmen igen.")
+    return matches[0]
+
+
 def _speaker_choices(
     work: Path,
+    wavs: list[Path],
     results: list[DiarizationResult],
     clusters: tuple[SpeakerCluster, ...],
 ) -> list[dict]:
@@ -84,6 +123,7 @@ def _speaker_choices(
         choices.append(
             {
                 "choice": choice,
+                "anchor": _speaker_anchor(wavs, source, segments),
                 "label": f"Stemme {choice}",
                 "speech_seconds": round(cluster.duration, 1),
                 "preview_duration": info["duration"],
@@ -99,6 +139,7 @@ def create_voice(
     output_dir: Path,
     language: str = "da",
     speaker_choice: int | None = None,
+    speaker_anchor: str | None = None,
 ) -> BuildResult:
     if not name.strip():
         raise ValueError("Stemmen skal have et navn.")
@@ -121,14 +162,18 @@ def create_voice(
         used = False
         try:
             results = diarize_many(wavs)
+            clusters = speaker_clusters(results)
             try:
-                diarizations = primary_speaker_segments(
-                    results,
-                    speaker_choice=speaker_choice,
-                )
+                if speaker_anchor:
+                    chosen = _cluster_from_anchor(wavs, results, clusters, speaker_anchor)
+                    diarizations = segments_for_cluster(results, chosen)
+                else:
+                    diarizations = primary_speaker_segments(
+                        results,
+                        speaker_choice=speaker_choice,
+                    )
             except AmbiguousSpeakers as exc:
-                clusters = speaker_clusters(results)
-                choices = _speaker_choices(work, results, clusters)
+                choices = _speaker_choices(work, wavs, results, clusters)
                 if len(choices) >= 2:
                     raise SpeakerSelectionRequired(choices) from exc
                 raise ValueError(

@@ -17,9 +17,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Chatterbox 0.1.7 pins torch/torchaudio 2.6.0. On Windows setup-windows.ps1
+# installs the official CUDA 12.6 wheels first so pip cannot silently choose a
+# CPU-only build.
 voice = [
-  "chatterbox-tts",
-  "pyannote.audio",
+  "chatterbox-tts==0.1.7",
+]
+# Current pyannote requires torch >=2.8, which is incompatible with Chatterbox's
+# 2.6 pin. It therefore runs in a separate CPU-only venv/process.
+diarization = [
+  "pyannote.audio>=4.0.7,<5",
 ]
 test = ["pytest>=8.0"]
 

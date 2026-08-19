@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -23,13 +25,57 @@ def _module_available(name: str) -> bool:
         return False
 
 
+def _diarization_python() -> Path | None:
+    explicit = os.getenv("VOICERIG_DIARIZATION_PYTHON", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        return path if path.is_file() else None
+    root = Path(__file__).resolve().parents[1]
+    for path in (
+        root / ".venv-diarization" / "Scripts" / "python.exe",
+        root / ".venv-diarization" / "bin" / "python",
+    ):
+        if path.is_file():
+            return path
+    return None
+
+
+def _probe_diarization_runtime() -> dict:
+    python = _diarization_python()
+    if python is None:
+        return {"ok": False, "python": None, "detail": "separat Python-runtime mangler"}
+    code = (
+        "import pyannote.audio,torch; "
+        "assert not torch.cuda.is_available(), 'diarization runtime must be CPU-only'; "
+        "print(pyannote.audio.__version__); print(torch.__version__)"
+    )
+    try:
+        proc = subprocess.run(
+            [str(python), "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30.0,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "python": str(python), "detail": str(exc)}
+    detail = (proc.stderr or proc.stdout or "").strip()[:500]
+    return {
+        "ok": proc.returncode == 0,
+        "python": str(python),
+        "detail": detail or None,
+    }
+
+
 def preflight() -> dict:
     readiness = voice_build_readiness()
+    diarization = _probe_diarization_runtime()
     checks = {
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "git": shutil.which("git") is not None,
         "chatterbox": _module_available("chatterbox.mtl_tts"),
         "torchaudio": _module_available("torchaudio"),
+        "diarization": diarization["ok"],
     }
     blockers = list(readiness["blockers"])
     if not checks["ffmpeg"]:
@@ -40,10 +86,16 @@ def preflight() -> dict:
         blockers.append("chatterbox-tts er ikke installeret i hovedmiljøet.")
     if not checks["torchaudio"]:
         blockers.append("torchaudio er ikke installeret i hovedmiljøet.")
+    if not checks["diarization"]:
+        blockers.append(
+            "Den separate pyannote CPU-runtime kan ikke importeres korrekt. "
+            f"Detalje: {diarization.get('detail') or 'ukendt fejl'}"
+        )
 
     return {
         "ok": not blockers,
         "checks": checks,
+        "diarization": diarization,
         "readiness": readiness,
         "blockers": blockers,
         "warnings": list(readiness["warnings"]),

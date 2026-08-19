@@ -13,7 +13,7 @@ from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig
 from voicerig.engines.package_runtime import status as tts_runtime_status
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
 from voicerig.profiles.package import validate_package
-from voicerig.runtime import hardware_status
+from voicerig.runtime import voice_build_readiness
 
 app = FastAPI(title="VoiceRig", version="0.1.0")
 app.include_router(tts_router)
@@ -28,13 +28,21 @@ def index() -> str:
 
 @app.get("/api/health")
 def health() -> dict:
+    readiness = voice_build_readiness()
     return {
         "ok": True,
         "service": "voicerig",
         "version": "0.1.0",
-        "hardware": hardware_status(),
+        "hardware": readiness["hardware"],
+        "voice_build_ready": readiness["ready"],
         "tts": tts_runtime_status(),
     }
+
+
+@app.get("/api/readiness")
+def readiness() -> dict:
+    """Cheap preflight for the physical rig; does not load Chatterbox/pyannote."""
+    return voice_build_readiness()
 
 
 @app.post("/api/voices")

@@ -93,7 +93,7 @@ if (-not $DiarReady) {
     if ($LASTEXITCODE -ne 0) { throw "pyannote.audio 4.0.7 kunne ikke installeres." }
 }
 
-& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio; assert pyannote.audio.__version__=='4.0.7'; assert torch.__version__.startswith('2.8.0'); assert torchaudio.__version__.startswith('2.8.0'); assert m.version('torchcodec')=='0.7.0'; assert not torch.cuda.is_available(); print(f'pyannote {pyannote.audio.__version__} CPU runtime OK | torch {torch.__version__} | torchaudio {torchaudio.__version__} | torchcodec {m.version(chr(116)+chr(111)+chr(114)+chr(99)+chr(104)+chr(99)+chr(111)+chr(100)+chr(101)+chr(99))}')"
+& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio; assert pyannote.audio.__version__=='4.0.7'; assert torch.__version__.startswith('2.8.0'); assert torchaudio.__version__.startswith('2.8.0'); assert m.version('torchcodec')=='0.7.0'; assert not torch.cuda.is_available(); print('pyannote {} CPU runtime OK | torch {} | torchaudio {} | torchcodec {}'.format(pyannote.audio.__version__, torch.__version__, torchaudio.__version__, m.version('torchcodec')))"
 if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø matcher ikke den verificerede runtime-kontrakt." }
 
 # Download and actually load both ML stacks now. This makes setup fail early

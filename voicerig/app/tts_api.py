@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from voicerig.engines.package_runtime import resolve_package, status, synthesize
+from voicerig.runtime import cuda_memory_stats
 
 router = APIRouter()
 
@@ -37,15 +38,22 @@ def tts_synthesize(req: SynthesizeRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return Response(
-        content=raw,
-        media_type="audio/wav",
-        headers={
-            "X-VoiceRig-Voice": str(meta["voice"]),
-            "X-VoiceRig-Voice-ID": str(meta["voice_id"]),
-            "X-VoiceRig-Package": str(meta["package"]),
-            "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
-            "X-VoiceRig-Duration": str(meta["duration"]),
-            "X-VoiceRig-Device": str(meta["device"]),
-        },
-    )
+    gpu = cuda_memory_stats()
+    headers = {
+        "X-VoiceRig-Voice": str(meta["voice"]),
+        "X-VoiceRig-Voice-ID": str(meta["voice_id"]),
+        "X-VoiceRig-Package": str(meta["package"]),
+        "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
+        "X-VoiceRig-Duration": str(meta["duration"]),
+        "X-VoiceRig-Device": str(meta["device"]),
+    }
+    # The build endpoint resets PyTorch peak counters. These headers therefore
+    # provide the same long-lived process' peak after the subsequent TTS call,
+    # which is the physically meaningful number for a 12 GB acceptance run.
+    if gpu.get("available"):
+        headers["X-VoiceRig-Peak-Allocated-GB"] = str(gpu["peak_allocated_gb"])
+        headers["X-VoiceRig-Peak-Reserved-GB"] = str(gpu["peak_reserved_gb"])
+        headers["X-VoiceRig-Allocated-GB"] = str(gpu["allocated_gb"])
+        headers["X-VoiceRig-Reserved-GB"] = str(gpu["reserved_gb"])
+
+    return Response(content=raw, media_type="audio/wav", headers=headers)

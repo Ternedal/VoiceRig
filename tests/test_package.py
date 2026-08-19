@@ -53,3 +53,13 @@ def test_rejects_unknown_payload(tmp_path: Path):
         zf.writestr("run.exe", b"nope")
     with pytest.raises(ValueError, match="Ukendt fil"):
         validate_package(package)
+
+
+def test_rejects_zip_bomb_sized_reference_before_payload_read(tmp_path: Path):
+    package = tmp_path / "oversized.mrvoice"
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # Highly compressible content keeps the archive tiny while its declared
+        # uncompressed size exceeds the 16 MiB WAV contract.
+        zf.writestr("reference.wav", b"\0" * (17 * 1024 * 1024))
+    with pytest.raises(ValueError, match="reference.wav er for stor"):
+        validate_package(package)

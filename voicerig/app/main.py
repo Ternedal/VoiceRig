@@ -17,7 +17,7 @@ from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig
 from voicerig.engines.package_runtime import status as tts_runtime_status
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
 from voicerig.profiles.package import validate_package
-from voicerig.runtime import voice_build_readiness
+from voicerig.runtime import cuda_memory_stats, reset_cuda_peaks, voice_build_readiness
 
 app = FastAPI(title="VoiceRig", version="0.1.0")
 app.include_router(tts_router)
@@ -70,6 +70,10 @@ def build_voice(
     if not _BUILD_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="VoiceRig arbejder allerede på en stemme. Prøv igen bagefter.")
 
+    # Physical acceptance must measure the actual long-lived VoiceRig process,
+    # not a second validator process. Reset immediately before this build; the
+    # subsequent TTS response reports the same process' cumulative peak.
+    reset_cuda_peaks()
     try:
         with tempfile.TemporaryDirectory(prefix="voicerig-upload-") as tmp:
             sources: list[Path] = []
@@ -134,6 +138,7 @@ def build_voice(
         "installed_in_modelrig": installed,
         "modelrig_detail": install_detail,
         "diarization_used": result.diarization_used,
+        "gpu": cuda_memory_stats(),
     }
 
 

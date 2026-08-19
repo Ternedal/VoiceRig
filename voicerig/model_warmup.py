@@ -15,6 +15,7 @@ from voicerig.model_contract import (
     CHATTERBOX_SOURCE_REVISION,
     MODEL_READINESS_SCHEMA,
     PYANNOTE_MODEL_ID,
+    PYANNOTE_PACKAGE_VERSION,
 )
 
 _READY_MARKER = "VOICERIG_DIARIZATION_READY="
@@ -74,8 +75,15 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
         payload = json.loads(line[len(_READY_MARKER):])
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeError("pyannote-worker returnerede ugyldigt warmup-resultat.") from exc
-    if not payload.get("ok") or payload.get("model") != PYANNOTE_MODEL_ID:
-        raise RuntimeError("pyannote-worker rapporterede en uventet modelkontrakt.")
+    if (
+        not payload.get("ok")
+        or payload.get("model") != PYANNOTE_MODEL_ID
+        or payload.get("package_version") != PYANNOTE_PACKAGE_VERSION
+    ):
+        raise RuntimeError(
+            "pyannote-worker rapporterede en uventet model- eller package-version. "
+            "Kør setup-windows.ps1 igen."
+        )
     return payload
 
 
@@ -89,7 +97,10 @@ def _write_readiness_marker(report: dict) -> Path:
             "model": CHATTERBOX_MODEL,
             "revision": CHATTERBOX_SOURCE_REVISION,
         },
-        "diarization": {"model": PYANNOTE_MODEL_ID},
+        "diarization": {
+            "package_version": PYANNOTE_PACKAGE_VERSION,
+            "model": PYANNOTE_MODEL_ID,
+        },
         "warmup": report,
     }
     temp = marker.with_suffix(marker.suffix + ".tmp")

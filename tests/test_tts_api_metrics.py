@@ -9,6 +9,7 @@ from voicerig.app.main import app
 
 
 def test_tts_response_exposes_same_process_peak_vram(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VOICERIG_ALLOW_LAN", "1")
     package = tmp_path / "voice.mrvoice"
     package.write_bytes(b"package")
     monkeypatch.setattr(tts_api, "resolve_package", lambda _name=None: package)

@@ -54,12 +54,15 @@ def build_voice(
     language: str = Form("da"),
     install_in_modelrig: bool = Form(True),
     speaker_choice: int | None = Form(None),
+    speaker_anchor: str | None = Form(None),
     files: list[UploadFile] = File(...),
 ) -> dict:
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="Maksimalt 10 filer pr. stemme.")
     if speaker_choice is not None and not 1 <= speaker_choice <= 4:
         raise HTTPException(status_code=400, detail="Ugyldigt stemmevalg.")
+    if speaker_anchor is not None and (len(speaker_anchor) > 64 or ":" not in speaker_anchor):
+        raise HTTPException(status_code=400, detail="Ugyldigt stemmeanker.")
     limit = max_upload_mb() * 1024 * 1024
     out_dir = data_dir() / "voices"
     if not _BUILD_LOCK.acquire(blocking=False):
@@ -92,6 +95,7 @@ def build_voice(
                     out_dir,
                     language=language,
                     speaker_choice=speaker_choice,
+                    speaker_anchor=speaker_anchor,
                 )
             except SpeakerSelectionRequired as exc:
                 raise HTTPException(

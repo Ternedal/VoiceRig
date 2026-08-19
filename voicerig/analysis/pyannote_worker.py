@@ -5,6 +5,11 @@ Why a subprocess? Chatterbox and current pyannote have incompatible torch
 requirements. Keeping them in separate venvs avoids an unsatisfiable dependency
 graph and also keeps diarization off the 12 GB GPU.
 
+VoiceRig always feeds this worker canonical mono PCM16 WAV produced by FFmpeg.
+The worker decodes that simple WAV with Python's standard library and gives
+pyannote an in-memory waveform dictionary. This deliberately bypasses
+TorchCodec's file decoder and its Windows FFmpeg-DLL discovery path.
+
 The protocol is intentionally tiny: input paths are argv, one JSON payload is
 printed with a stable marker, diagnostics go to stderr. `--preload` downloads
 and verifies the community-1 pipeline without processing user audio.
@@ -15,6 +20,7 @@ import importlib.metadata
 import json
 import os
 import sys
+import wave
 from pathlib import Path
 
 _MARKER = "VOICERIG_DIARIZATION_JSON="
@@ -37,8 +43,46 @@ def _load_pipeline():
     return Pipeline.from_pretrained(_MODEL_ID, token=token)
 
 
+def _load_canonical_wav(path: str):
+    """Read VoiceRig's mono PCM16 WAV without TorchCodec or torchaudio IO."""
+    try:
+        import torch
+    except Exception as exc:
+        raise RuntimeError(f"torch unavailable: {exc}") from exc
+
+    source = Path(path).resolve()
+    try:
+        with wave.open(str(source), "rb") as wav:
+            channels = wav.getnchannels()
+            width = wav.getsampwidth()
+            sample_rate = wav.getframerate()
+            frames = wav.getnframes()
+            raw = wav.readframes(frames)
+    except (OSError, wave.Error) as exc:
+        raise RuntimeError(f"invalid canonical WAV {source.name}: {exc}") from exc
+
+    if channels != 1 or width != 2 or sample_rate <= 0 or frames <= 0:
+        raise RuntimeError(
+            f"canonical WAV must be mono PCM16 with positive sample rate: {source.name}"
+        )
+    expected_bytes = frames * channels * width
+    if len(raw) != expected_bytes:
+        raise RuntimeError(f"canonical WAV is truncated: {source.name}")
+
+    # frombuffer avoids a Python-level sample loop; clone owns writable tensor
+    # storage after the immutable bytes object goes out of scope.
+    waveform = torch.frombuffer(raw, dtype=torch.int16).clone().to(torch.float32)
+    waveform.div_(32768.0)
+    waveform = waveform.unsqueeze(0)
+    return {
+        "waveform": waveform,
+        "sample_rate": int(sample_rate),
+        "uri": source.stem,
+    }
+
+
 def _one(pipeline, path: str) -> dict:
-    output = pipeline(path)
+    output = pipeline(_load_canonical_wav(path))
     timeline = getattr(output, "exclusive_speaker_diarization", None)
     if timeline is None:
         timeline = output.speaker_diarization
@@ -103,6 +147,7 @@ def main() -> int:
                     "torchaudio_version": str(torchaudio.__version__),
                     "torchcodec_version": str(torchcodec_version),
                     "cuda_available": bool(torch.cuda.is_available()),
+                    "audio_input": "in-memory-pcm16-wav",
                     "telemetry": os.getenv("PYANNOTE_METRICS_ENABLED", "0"),
                 },
                 ensure_ascii=False,

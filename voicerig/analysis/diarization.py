@@ -36,8 +36,6 @@ class DiarizationResult:
 
 @dataclass(frozen=True)
 class SpeakerCluster:
-    """One cross-file voice identity, ranked later by total speech duration."""
-
     speakers: tuple[Speaker, ...]
     duration: float
     centroid: tuple[float, ...] | None
@@ -45,6 +43,10 @@ class SpeakerCluster:
 
 class DiarizationUnavailable(RuntimeError):
     pass
+
+
+class AmbiguousSpeakers(ValueError):
+    """Raised only when a human choice is safer than automatic selection."""
 
 
 _MARKER = "VOICERIG_DIARIZATION_JSON="
@@ -100,7 +102,6 @@ def _parse_result(item: dict) -> DiarizationResult:
 
 
 def diarize_many(audios: list[Path]) -> list[DiarizationResult]:
-    """Run all files through one CPU-only pyannote subprocess/model load."""
     if not audios:
         return []
     worker = Path(__file__).with_name("pyannote_worker.py")
@@ -178,7 +179,6 @@ def speaker_clusters(
     results: list[DiarizationResult],
     similarity_threshold: float = 0.75,
 ) -> tuple[SpeakerCluster, ...]:
-    """Return cross-file voice identities ranked by total speaking time."""
     nodes = [speaker for result in results for speaker in result.speakers if speaker.duration > 0]
     if not nodes:
         return ()
@@ -230,12 +230,6 @@ def primary_speaker_segments(
     minimum_dominance_ratio: float = 1.5,
     speaker_choice: int | None = None,
 ) -> dict[Path, list[Segment]]:
-    """Return the clearly dominant identity or an explicitly selected rank.
-
-    `speaker_choice` is 1-based and maps to `speaker_clusters()` duration ranking.
-    This makes the rare ambiguous-speaker UI deterministic for a repeated build
-    request with the same files.
-    """
     clusters = speaker_clusters(results, similarity_threshold=similarity_threshold)
     if not clusters:
         return {}
@@ -249,7 +243,5 @@ def primary_speaker_segments(
         first = clusters[0].duration
         second = clusters[1].duration
         if second > 0.0 and first / second < max(1.0, minimum_dominance_ratio):
-            raise ValueError(
-                "Vi fandt flere omtrent lige tydelige stemmer i klippene."
-            )
+            raise AmbiguousSpeakers("Vi fandt flere omtrent lige tydelige stemmer i klippene.")
     return segments_for_cluster(results, clusters[0])

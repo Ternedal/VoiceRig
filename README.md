@@ -8,8 +8,11 @@ VoiceRig laver en portabel ModelRig-stemmeprofil ud fra almindelige lyd- og vide
 
 - Læser lyd/video gennem FFmpeg.
 - Finder et godt referenceklip automatisk.
+- Kan samle flere korte, rene taleturns fra samme person til én 6–10 sekunders reference uden at kopiere lyd fra hullerne mellem dem.
 - Bruger lokal `pyannote/speaker-diarization-community-1` til flere talere.
-- Matcher samme speaker på tværs af flere klip.
+- Matcher samme speaker på tværs af flere klip via varighedsvægtede speaker-centroids.
+- Vælger kun en speaker automatisk ved tydelig dominans; næsten lige tydelige personer giver en brugerfejl frem for et gæt.
+- Fejler lukket hvis speaker-analysen ikke kan køre. Undiarized fallback findes kun som eksplicit udvikler-escape hatch.
 - Bygger Chatterbox Multilingual V3 voice conditioning.
 - Genererer dansk preview.
 - Pakker `reference.wav`, `conditioning.pt`, `preview.wav`, manifest og checksums i `.mrvoice`.
@@ -63,13 +66,17 @@ Hovedmiljø og diarization-miljø må **ikke** flettes sammen. Se
 opdeling. En simpel `pip install -e ".[voice,diarization]"` er bevidst ikke en
 understøttet konfiguration.
 
+`VOICERIG_ALLOW_UNDIARIZED=1` må kun bruges i kontrollerede udviklertests med
+kendt single-speaker-materiale. Normal produktadfærd er fail-closed.
+
 ## Start
 
 ```powershell
 .\start-windows.ps1
 ```
 
-UI åbner på `http://127.0.0.1:8765`.
+UI åbner på `http://127.0.0.1:8765`. Knappen **Opret stemme** aktiveres først,
+når den lokale hardware-readiness er grøn.
 
 ## ModelRig
 
@@ -89,8 +96,9 @@ Efter installation kan miljøet kontrolleres uden at bygge en stemme:
 .\validate-rig.ps1
 ```
 
-Preflight kontrollerer CUDA, GPU/VRAM, FFmpeg, Git, Chatterbox/torchaudio og den
-separate CPU-runtime til speaker-analyse. Resultatet gemmes i
+Preflight kontrollerer CUDA, GPU/VRAM, FFmpeg, Git, Chatterbox/torchaudio og
+starter den separate diarization-Python for at bevise, at `pyannote.audio` kan
+importeres og at dens Torch-runtime faktisk er CPU-only. Resultatet gemmes i
 `validation-report.json`.
 
 Den fulde accepttest bruger et eller flere rigtige lyd-/videoklip:

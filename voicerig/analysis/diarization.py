@@ -172,11 +172,23 @@ def _cluster_centroid(cluster: list[Speaker]) -> tuple[float, ...] | None:
     )
 
 
+def _cluster_duration(cluster: list[Speaker]) -> float:
+    return sum(max(0.0, speaker.duration) for speaker in cluster)
+
+
 def primary_speaker_segments(
     results: list[DiarizationResult],
     similarity_threshold: float = 0.75,
+    minimum_dominance_ratio: float = 1.5,
 ) -> dict[Path, list[Segment]]:
-    """Match speakers across files and return segments for the dominant person."""
+    """Match speakers across files and return the clearly dominant person.
+
+    If two distinct voice clusters have similar total speaking time, guessing is
+    worse than asking for cleaner input. VoiceRig therefore auto-selects only
+    when the leading cluster is at least `minimum_dominance_ratio` times the
+    runner-up. A future UI can expose explicit speaker selection on this exact
+    ambiguity signal without changing the clustering contract.
+    """
     nodes = [speaker for result in results for speaker in result.speakers if speaker.duration > 0]
     if not nodes:
         return {}
@@ -198,7 +210,18 @@ def primary_speaker_segments(
         else:
             clusters[best_idx].append(node)
 
-    primary = max(clusters, key=lambda c: sum(s.duration for s in c))
+    ranked = sorted(clusters, key=_cluster_duration, reverse=True)
+    primary = ranked[0]
+    if len(ranked) > 1:
+        first = _cluster_duration(ranked[0])
+        second = _cluster_duration(ranked[1])
+        if second > 0.0 and first / second < max(1.0, minimum_dominance_ratio):
+            raise ValueError(
+                "Vi fandt flere omtrent lige tydelige stemmer i klippene. "
+                "Tilføj et klip med mere tale fra den person, du vil bruge, "
+                "eller fjern et klip hvor en anden person fylder meget."
+            )
+
     selected = {(s.source, s.label) for s in primary}
     by_source: dict[Path, list[Segment]] = {}
     for result in results:

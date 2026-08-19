@@ -1,163 +1,95 @@
-# VoiceRig v1 — kravspecifikation og acceptance
+# VoiceRig v1 — kravspecifikation og sporbarhed
 
 ## Produktmål
 
 Den normale bruger skal kun:
 
-1. Trække 1–10 lyd- eller videofiler ind.
-2. Give stemmen et navn.
-3. Trykke **Opret stemme**.
+1. trække 1–10 lyd- eller videofiler ind,
+2. give stemmen et navn,
+3. trykke **Opret stemme**.
 
-Hvis én person tydeligt dominerer materialet, må VoiceRig ikke stille tekniske
-spørgsmål. Hvis flere personer er omtrent lige tydelige, må den eneste ekstra
-handling være at afspille korte stemmeprøver og vælge **Brug denne stemme**.
+VoiceRig skal derefter automatisk decode materialet, finde den rigtige person,
+vælge gode references, oprette Chatterbox V3 conditioning, generere preview,
+bygge en portabel `.mrvoice` og installere den til lokal ModelRig.
 
-Resultatet er en portabel `.mrvoice`, som ModelRig kan bruge direkte.
+Hvis materialet indeholder flere omtrent lige tydelige personer, er den eneste
+ekstra interaktion korte afspillelige speaker-prøver + **Brug denne stemme**.
 
-## Input
+## V1-krav — implementeret i software
 
-V1 understøtter via FFmpeg:
+- [x] MP3/WAV/M4A/FLAC/AAC/OGG/OPUS/WMA og MP4/MKV/MOV/AVI/WEBM/M4V accepteres via FFmpeg.
+- [x] Input normaliseres til mono PCM16 WAV uden at ændre originalfilerne.
+- [x] pyannote community-1 kører i separat CPU-only runtime.
+- [x] VoiceRig sender canonical WAV som in-memory waveform til pyannote og er derfor ikke afhængig af TorchCodec file-decoding på Windows.
+- [x] Samme person matches på tværs af filer med varighedsvægtede speaker-centroids.
+- [x] Single-link speaker-chaining er regressionstestet væk.
+- [x] Tydelig hovedperson vælges automatisk.
+- [x] Tvetydigt materiale giver afspillelige stemmeprøver i UI i stedet for et gæt.
+- [x] Brugerens speaker-valg genfindes via et taleturn-anker, ikke kun et rangnummer.
+- [x] Manglende diarization fejler lukket i produktmode.
+- [x] Flere korte rene turns kan stitches uden at kopiere lyd fra hullerne mellem dem.
+- [x] Referencevalg kræver ca. 5,5–10 sekunders brugbar tale.
+- [x] Primær reference + op til tre diverse backup-references produceres normalt.
+- [x] Chatterbox Multilingual V3 er default engine; dansk (`da`) er default sprog.
+- [x] Chatterbox V3 er pin'et til en verificeret Git source-revision frem for den ældre PyPI-0.1.7-kodeflade.
+- [x] Hovedruntime bruger Torch/Torchaudio 2.6.0 CUDA; diarization bruger eksakt pyannote 4.0.7 + Torch/Torchaudio 2.8.0 + TorchCodec 0.7.0 CPU.
+- [x] `.env` indlæses deterministisk; session/OS-env vinder.
+- [x] pyannote telemetry er slået fra som standard.
+- [x] Windows setup downloader og loader begge modelstacks som warmup.
+- [x] UI låses indtil model-readiness-marker matcher den aktuelle runtime-kontrakt.
+- [x] Chatterbox model caches og genbruges; kun ét voice-build kører ad gangen.
+- [x] Conditioning + preview er atomisk under samme re-entrant GPU-lås.
+- [x] Preview genbruger allerede prepared conditionals og beregner dem ikke to gange.
+- [x] Voice-build og sidecar deler conditioning-identitet, så mutable modelstate ikke kan divergere fra cache-identiteten.
+- [x] Preview og runtime-TTS gemmes som signed PCM16 WAV.
+- [x] Reference, preview og fysisk testsyntese valideres på WAV, varighed og hørbar RMS.
+- [x] `.mrvoice` indeholder manifest, checksums, primary reference, conditioning og preview.
+- [x] `.mrvoice` kan indeholde backup-references.
+- [x] Nye profiler registrerer Chatterbox source-revision.
+- [x] Serialized conditioning genbruges kun ved matchende revision; ellers regenereres den fra `reference.wav`.
+- [x] `.mrvoice` afviser path traversal, dubletter, krypterede/ukendte entries, checksum-fejl og ZIP-bomb-lignende størrelser.
+- [x] Manifest afviser ugyldige typer, sprog, NaN/Infinity og out-of-range TTS-parametre.
+- [x] Same-host profil installeres atomisk i `~/.kaliv/voices/` og markeres default.
+- [x] VoiceRig har loopback TTS-sidecar til ModelRig.
+- [x] ModelRig `main` har `.mrvoice`/VoiceRig-provider med Piper fallback.
+- [x] Build og TTS rapporterer serverprocessens aktuelle/peak CUDA-memory til fysisk acceptance.
+- [x] Fysisk validator bruger den rigtige VoiceRig HTTP-service, ikke en separat Chatterbox-model.
+- [x] Fysisk ModelRig-validering bruger autentificeret backend `/api/v1/health/full`, ikke rå worker-port.
+- [x] ModelRig PASS kan kræve `checks.tts.provider == "voicerig"` og korrekt aktiv package.
+- [x] Setup genstarter en allerede kørende VoiceRig-service efter opdatering og verificerer aktiv Git HEAD.
+- [x] Service health/readiness eksponerer PID og Git source revision til acceptance-evidence.
+- [x] Originale inputfiler ændres aldrig.
+- [x] Midlertidige arbejdsfiler ryddes op.
+- [x] VoiceRig sender ikke kildeaudio til en cloudtjeneste.
 
-```text
-Video: MP4, MKV, MOV, AVI, WEBM, M4V
-Audio: WAV, MP3, FLAC, M4A, AAC, OGG, OPUS, WMA
-```
+## Fysisk acceptance — stadig åben
 
-- Maks. 10 inputfiler pr. build.
-- Samlet uploadbudget er konfigurerbart; default 2048 MB.
-- Originale filer ændres aldrig.
-- Midlertidige decode-/analysefiler ryddes automatisk.
+Software-CI kan ikke bevise følgende og PR #1 må derfor forblive draft:
 
-## Automatisk speaker-pipeline
+- [ ] Windows setup/warmup PASS på den faktiske rig.
+- [ ] Chatterbox V3 loader og genererer på RTX 3060 12 GB uden CUDA OOM.
+- [ ] pyannote community-1 kører på rigtig inputaudio i CPU-runtime.
+- [ ] Rigtige lyd-/videoklip producerer korrekt person/reference.
+- [ ] Serverprocessens peak allocated/reserved VRAM holder sig inden for 12 GB-kortet.
+- [ ] Dansk testsyntese er forståelig og stabil.
+- [ ] Stemmeidentiteten er manuelt genkendelig som kilden.
+- [ ] Speaker-embedding cosine registreres som kalibreringsdata (ingen hård tærskel endnu).
+- [ ] ModelRig-backend rapporterer VoiceRig som aktiv TTS-provider med den netop byggede package.
+- [ ] ModelRig kan faktisk afspille/syntetisere med stemmen i normal brugerflow.
+- [ ] Piper fallback fungerer fortsat, når VoiceRig-sidecaren stoppes.
 
-VoiceRig v1 skal:
+Den autoritative procedure ligger i `docs/RIG_ACCEPTANCE.md`.
 
-- decode alle inputs til canonical mono PCM16 WAV
-- køre pyannote community-1 lokalt
-- holde pyannote i separat CPU-only runtime
-- bruge exclusive diarization til rene taleturns når tilgængelig
-- matche samme person på tværs af filer med speaker embeddings
-- undgå single-link speaker-cluster chaining
-- vælge hovedpersonen automatisk kun ved tydelig dominans
-- ved tvivl vise op til fire afspillelige stemmeprøver
-- genfinde et manuelt valg via inputfil + timestamp-anker, ikke kun rangnummer
-- fejle lukket hvis speaker-analysen ikke kan køres sikkert
+## Definition of Done
 
-`VOICERIG_ALLOW_UNDIARIZED=1` er kun en udvikler-escape hatch til kendt
-single-speaker-testmateriale og må ikke være normal produktadfærd.
+VoiceRig v1 er først mergeklar, når **samme commit** har:
 
-## Referencevalg
-
-- Primær reference skal indeholde mindst ca. 5.5 sekunders brugbar tale.
-- Målet er ca. 6–10 sekunders ren tale.
-- Flere korte taleturns fra samme person må stitches sammen.
-- Lyd mellem valgte taleturns må ikke kopieres med, fordi en anden person kan tale der.
-- Reference skal passere WAV-, varigheds- og audible/RMS-gate.
-- `.mrvoice` må indeholde op til fem alternative references; VoiceRig v1 producerer normalt op til tre diverse backups.
-- Backup-reference ranking skal begrænse overlap, så near-duplicates ikke fylder alle slots.
-
-## TTS / GPU
-
-Primær engine er Chatterbox Multilingual V3 med dansk som default.
-
-Referencehardware for V1 er én NVIDIA-GPU i 12 GB-klassen:
-
-- Chatterbox kører på CUDA.
-- pyannote kører på CPU og må ikke bruge GPU-VRAM.
-- kun ét voice-build må mutere Chatterbox-state ad gangen
-- conditioning + preview skal være én atomisk GPU/model-state-transaktion
-- preview skal genbruge allerede forberedt conditioning og må ikke beregne den igen
-- TTS-sidecar og voice-build skal dele én conditioning-identitet, så cache og faktisk `model.conds` ikke kan divergere
-- runtime skal måle peak allocated/reserved VRAM under fysisk acceptance
-
-Preview og runtime-TTS skrives som deterministic signed PCM16 WAV.
-
-## `.mrvoice` v1
-
-Obligatorisk:
-
-```text
-manifest.json
-checksums.json
-reference.wav
-conditioning.pt
-preview.wav
-```
-
-Valgfrit:
-
-```text
-references/candidate_01.wav
-...
-references/candidate_05.wav
-```
-
-Pakken skal være data-only og valideres før brug:
-
-- format/version
-- manifest-schema og typer
-- finite/range-validerede TTS-defaults
-- exact payload/checksum-dækning
-- SHA-256 mismatch
-- path traversal
-- backslash archive paths
-- ukendte payloads
-- dublerede entries
-- krypterede entries
-- entry count
-- per-file og samlet uncompressed size
-
-Se `docs/MRVOICE_SPEC.md` for den normative v1-kontrakt.
-
-## ModelRig-integration
-
-- `.mrvoice` installeres same-host atomisk i `~/.kaliv/voices/` og markeres som default.
-- VoiceRig har en loopback-only TTS-sidecar på `127.0.0.1:8765`.
-- ModelRig `main` understøtter VoiceRig-provider og `.mrvoice` via sidecaren.
-- ModelRig beholder Piper som fallback.
-- ModelRig må ikke loade en ekstra Chatterbox-model i sin worker-VRAM.
-- VoiceRig kan stadig eksportere `.mrvoice`, selv hvis ModelRig ikke kører.
-
-## Privacy
-
-- VoiceRig er local-first.
-- Kildeaudio/video, speaker embeddings og stemmeprofiler sendes ikke automatisk til cloud.
-- Første download af pyannote-modellen kan kræve Hugging Face-token/modeladgang; selve analyseflowet kører derefter lokalt.
-
-## Software acceptance
-
-Følgende skal være dækket af GitHub CI:
-
-- package/schema/security tests
-- reference ranking/stitching tests
-- diarization/clustering tests
-- ambiguous-speaker selection + playable preview contract
-- fail-closed speaker pipeline
-- runtime/readiness tests
-- PCM16/audio validation
-- Chatterbox mutable-state/cache concurrency tests
-- ModelRig client + TTS-sidecar tests
-- rig-validation helper tests
-- Python compileall
-- PowerShell syntax
-
-## Fysisk acceptance — sidste gate
-
-PR #1 må forblive draft, indtil `docs/RIG_ACCEPTANCE.md` er gennemført på den
-faktiske 12 GB-rig med rigtige klip.
-
-Der skal dokumenteres:
-
-- exact commit SHA
-- setup/preflight PASS
-- faktisk pyannote modeldownload/diarization
-- `.mrvoice` build PASS
-- peak VRAM uden CUDA OOM
-- buildtid og syntesetid
-- speaker-similarity cosine som informationsmåling
-- manuel lyttekontrol PASS
-- ModelRig `tts=true` og end-to-end afspilning PASS
-- Piper fallback stadig funktionel
-
-Ingen automatisk similarity-tærskel må opfindes før målingen er kalibreret på
-rigtige reference/syntese-par.
+1. grøn GitHub CI,
+2. clean fysisk checkout,
+3. aktiv VoiceRig-service på samme Git HEAD,
+4. setup/warmup PASS,
+5. fuld VoiceRig HTTP E2E PASS,
+6. peak VRAM PASS på RTX 3060 12 GB,
+7. manuel lyd-/stemmelighed PASS,
+8. ModelRig backend/provider/package PASS,
+9. Piper fallback PASS.

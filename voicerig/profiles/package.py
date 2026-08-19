@@ -9,6 +9,11 @@ import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from voicerig.model_contract import (
+    CHATTERBOX_ENGINE,
+    CHATTERBOX_MODEL,
+    CHATTERBOX_SOURCE_REVISION,
+)
 
 FORMAT = "modelrig-voice"
 FORMAT_VERSION = 1
@@ -20,6 +25,7 @@ _MAX_METADATA_BYTES = 256 * 1024
 _MAX_WAV_BYTES = 16 * 1024 * 1024
 _MAX_CONDITIONING_BYTES = 64 * 1024 * 1024
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 
 
@@ -59,7 +65,11 @@ def build_package(name: str, language: str, reference: Path, conditioning: Path,
         id=voice_id,
         name=name.strip(),
         language=language,
-        engine={"name": "chatterbox-multilingual", "model": "v3"},
+        engine={
+            "name": CHATTERBOX_ENGINE,
+            "model": CHATTERBOX_MODEL,
+            "revision": CHATTERBOX_SOURCE_REVISION,
+        },
         files={"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"},
         defaults={"exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8},
     )
@@ -153,6 +163,11 @@ def _validate_manifest(manifest) -> dict:
         raise ValueError("Manifestets engine skal være et objekt.")
     _nonempty_string(engine.get("name"), "engine.name", 80)
     _nonempty_string(engine.get("model"), "engine.model", 80)
+    revision = engine.get("revision")
+    if revision is not None:
+        revision = _nonempty_string(revision, "engine.revision", 64)
+        if not _HEX40.fullmatch(revision):
+            raise ValueError("Manifestets engine.revision er ugyldig.")
 
     expected_map = {"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"}
     if manifest.get("files") != expected_map:

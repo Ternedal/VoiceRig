@@ -12,7 +12,9 @@ class ChatterboxUnavailable(RuntimeError):
 
 _MODELS: dict[str, object] = {}
 _MODEL_LOAD_LOCK = threading.Lock()
-_MODEL_RUN_LOCK = threading.Lock()
+# RLock lets a higher-level voice-build transaction hold the GPU state stable
+# while the existing helpers keep their own defensive lock acquisition.
+_MODEL_RUN_LOCK = threading.RLock()
 
 
 def _shared_model():
@@ -91,3 +93,10 @@ class ChatterboxEngine:
             output.parent.mkdir(parents=True, exist_ok=True)
             _save_pcm16(ta, output, wav, model.sr)
         return output
+
+    def build_artifacts(self, reference_wav: Path, conditioning: Path, preview: Path) -> tuple[Path, Path]:
+        """Create conditioning + preview as one atomic mutable-model transaction."""
+        with _MODEL_RUN_LOCK:
+            self.build_conditioning(reference_wav, conditioning)
+            self.preview(reference_wav, preview)
+        return conditioning, preview

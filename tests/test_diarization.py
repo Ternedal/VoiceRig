@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from voicerig.analysis.diarization import DiarizationResult, Segment, Speaker, primary_speaker_segments
 
 
@@ -34,3 +36,18 @@ def test_cross_file_matching_does_not_single_link_chain_different_speakers():
     assert a in selected
     assert b in selected
     assert c not in selected
+
+
+def test_near_equal_distinct_speakers_are_not_guessed():
+    wav = Path("interview.wav")
+    result = DiarizationResult(
+        wav,
+        (Segment(0, 10, "A"), Segment(10, 19, "B")),
+        (
+            Speaker(wav, "A", 10, (1.0, 0.0)),
+            Speaker(wav, "B", 9, (0.0, 1.0)),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="flere omtrent lige tydelige stemmer"):
+        primary_speaker_segments([result], similarity_threshold=0.9)

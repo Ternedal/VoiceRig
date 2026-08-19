@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import uuid
 import zipfile
@@ -18,6 +19,8 @@ _MAX_TOTAL_UNCOMPRESSED = 128 * 1024 * 1024
 _MAX_METADATA_BYTES = 256 * 1024
 _MAX_WAV_BYTES = 16 * 1024 * 1024
 _MAX_CONDITIONING_BYTES = 64 * 1024 * 1024
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,60 @@ def _validate_archive_shape(infos: list[zipfile.ZipInfo]) -> list[str]:
     return names
 
 
+def _json_no_constants(value: str):
+    raise ValueError(f"Ugyldig JSON-konstant i .mrvoice: {value}")
+
+
+def _nonempty_string(value, field: str, max_len: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"Manifestfeltet {field} skal være tekst.")
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > max_len or any(ord(ch) < 32 for ch in cleaned):
+        raise ValueError(f"Manifestfeltet {field} er ugyldigt.")
+    return cleaned
+
+
+def _bounded_number(defaults: dict, field: str, minimum: float, maximum: float) -> float:
+    value = defaults.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"TTS-default {field} skal være et tal.")
+    value = float(value)
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f"TTS-default {field} ligger uden for det tilladte interval.")
+    return value
+
+
+def _validate_manifest(manifest) -> dict:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest.json skal indeholde et JSON-objekt.")
+    if manifest.get("format") != FORMAT or manifest.get("format_version") != FORMAT_VERSION:
+        raise ValueError("Ikke-understøttet .mrvoice-format.")
+
+    _nonempty_string(manifest.get("id"), "id", 160)
+    _nonempty_string(manifest.get("name"), "name", 160)
+    language = _nonempty_string(manifest.get("language"), "language", 16)
+    if not _LANGUAGE.fullmatch(language):
+        raise ValueError("Manifestets language er ugyldigt.")
+
+    engine = manifest.get("engine")
+    if not isinstance(engine, dict):
+        raise ValueError("Manifestets engine skal være et objekt.")
+    _nonempty_string(engine.get("name"), "engine.name", 80)
+    _nonempty_string(engine.get("model"), "engine.model", 80)
+
+    expected_map = {"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"}
+    if manifest.get("files") != expected_map:
+        raise ValueError("Manifestets filreferencer matcher ikke .mrvoice v1-kontrakten.")
+
+    defaults = manifest.get("defaults")
+    if not isinstance(defaults, dict) or set(defaults) != {"exaggeration", "cfg_weight", "temperature"}:
+        raise ValueError("Manifestets TTS-defaults matcher ikke .mrvoice v1-kontrakten.")
+    _bounded_number(defaults, "exaggeration", 0.0, 2.0)
+    _bounded_number(defaults, "cfg_weight", 0.0, 2.0)
+    _bounded_number(defaults, "temperature", 0.05, 5.0)
+    return manifest
+
+
 def validate_package(package: Path) -> dict:
     with zipfile.ZipFile(package, "r") as zf:
         names = _validate_archive_shape(zf.infolist())
@@ -117,17 +174,23 @@ def validate_package(package: Path) -> dict:
         missing = required.difference(names)
         if missing:
             raise ValueError(f"Manglende filer i .mrvoice: {sorted(missing)}")
-        manifest = json.loads(zf.read("manifest.json"))
-        if manifest.get("format") != FORMAT or manifest.get("format_version") != FORMAT_VERSION:
-            raise ValueError("Ikke-understøttet .mrvoice-format.")
-        expected_map = {"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"}
-        if (manifest.get("files") or {}) != expected_map:
-            raise ValueError("Manifestets filreferencer matcher ikke .mrvoice v1-kontrakten.")
-        checksums = json.loads(zf.read("checksums.json"))
+        try:
+            manifest = json.loads(zf.read("manifest.json"), parse_constant=_json_no_constants)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("manifest.json er ugyldig JSON.") from exc
+        _validate_manifest(manifest)
+        try:
+            checksums = json.loads(zf.read("checksums.json"), parse_constant=_json_no_constants)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("checksums.json er ugyldig JSON.") from exc
+        if not isinstance(checksums, dict):
+            raise ValueError("checksums.json skal indeholde et JSON-objekt.")
         payloads = {name for name in names if name not in {"manifest.json", "checksums.json"}}
         if set(checksums) != payloads:
             raise ValueError("Checksums dækker ikke præcis alle payload-filer.")
         for name, expected in checksums.items():
+            if not isinstance(expected, str) or not _HEX64.fullmatch(expected):
+                raise ValueError(f"Ugyldig SHA-256 checksum for {name}")
             actual = hashlib.sha256(zf.read(name)).hexdigest()
             if actual != expected:
                 raise ValueError(f"Checksum-fejl i {name}")

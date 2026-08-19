@@ -13,6 +13,11 @@ FORMAT = "modelrig-voice"
 FORMAT_VERSION = 1
 _REQUIRED_PAYLOADS = {"reference.wav", "conditioning.pt", "preview.wav"}
 _ALLOWED_TOP_LEVEL = {"manifest.json", "checksums.json", *_REQUIRED_PAYLOADS}
+_MAX_ENTRIES = 10
+_MAX_TOTAL_UNCOMPRESSED = 128 * 1024 * 1024
+_MAX_METADATA_BYTES = 256 * 1024
+_MAX_WAV_BYTES = 16 * 1024 * 1024
+_MAX_CONDITIONING_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -69,18 +74,45 @@ def build_package(name: str, language: str, reference: Path, conditioning: Path,
     return output
 
 
+def _member_limit(name: str) -> int:
+    if name in {"manifest.json", "checksums.json"}:
+        return _MAX_METADATA_BYTES
+    if name == "conditioning.pt":
+        return _MAX_CONDITIONING_BYTES
+    if name in {"reference.wav", "preview.wav"} or name.startswith("references/"):
+        return _MAX_WAV_BYTES
+    return 0
+
+
+def _validate_archive_shape(infos: list[zipfile.ZipInfo]) -> list[str]:
+    if len(infos) > _MAX_ENTRIES:
+        raise ValueError("For mange filer i .mrvoice-pakken.")
+    names = [info.filename for info in infos]
+    if len(names) != len(set(names)):
+        raise ValueError("Dublerede filer i .mrvoice-pakken.")
+
+    total = 0
+    for info in infos:
+        name = info.filename
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts or "\\" in name:
+            raise ValueError("Ugyldig sti i .mrvoice-pakken.")
+        if name not in _ALLOWED_TOP_LEVEL and not name.startswith("references/"):
+            raise ValueError(f"Ukendt fil i .mrvoice-pakken: {name}")
+        if info.flag_bits & 0x1:
+            raise ValueError("Krypterede filer understøttes ikke i .mrvoice.")
+        limit = _member_limit(name)
+        if limit <= 0 or info.file_size > limit:
+            raise ValueError(f"{name} er for stor til .mrvoice v1-kontrakten.")
+        total += info.file_size
+        if total > _MAX_TOTAL_UNCOMPRESSED:
+            raise ValueError(".mrvoice-pakken er for stor efter udpakning.")
+    return names
+
+
 def validate_package(package: Path) -> dict:
     with zipfile.ZipFile(package, "r") as zf:
-        infos = zf.infolist()
-        names = [info.filename for info in infos]
-        if len(names) != len(set(names)):
-            raise ValueError("Dublerede filer i .mrvoice-pakken.")
-        for name in names:
-            path = Path(name)
-            if path.is_absolute() or ".." in path.parts or "\\" in name:
-                raise ValueError("Ugyldig sti i .mrvoice-pakken.")
-            if name not in _ALLOWED_TOP_LEVEL and not name.startswith("references/"):
-                raise ValueError(f"Ukendt fil i .mrvoice-pakken: {name}")
+        names = _validate_archive_shape(zf.infolist())
         required = {"manifest.json", "checksums.json", *_REQUIRED_PAYLOADS}
         missing = required.difference(names)
         if missing:

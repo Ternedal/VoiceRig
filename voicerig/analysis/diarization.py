@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import json
 import math
 import os
-import threading
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-
-from voicerig.runtime import diarization_device
 
 
 @dataclass(frozen=True)
@@ -39,78 +38,105 @@ class DiarizationUnavailable(RuntimeError):
     pass
 
 
-_PIPELINES: dict[str, object] = {}
-_PIPELINE_LOAD_LOCK = threading.Lock()
-_PIPELINE_RUN_LOCK = threading.Lock()
+_MARKER = "VOICERIG_DIARIZATION_JSON="
 
 
-def _get_pipeline():
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
-    try:
-        import torch
-        from pyannote.audio import Pipeline
-    except Exception as exc:  # pragma: no cover - optional heavyweight dependency
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _worker_python() -> Path:
+    explicit = os.getenv("VOICERIG_DIARIZATION_PYTHON", "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if candidate.is_file():
+            return candidate
         raise DiarizationUnavailable(
-            "pyannote.audio er ikke installeret. Kør: pip install -e '.[voice]'"
-        ) from exc
+            f"VOICERIG_DIARIZATION_PYTHON peger på en fil der ikke findes: {candidate}"
+        )
 
-    device = diarization_device()
-    with _PIPELINE_LOAD_LOCK:
-        if device in _PIPELINES:
-            return _PIPELINES[device]
-        try:
-            pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-community-1",
-                token=token,
-            )
-            if device == "cuda":
-                pipeline.to(torch.device("cuda"))
-            _PIPELINES[device] = pipeline
-            return pipeline
-        except Exception as exc:  # pragma: no cover - model/runtime specific
-            raise DiarizationUnavailable(
-                "Speaker-analyse kunne ikke startes. Første opsætning kan kræve HF_TOKEN "
-                "og accept af pyannote community-1 modelvilkårene."
-            ) from exc
+    root = _repo_root()
+    candidates = [
+        root / ".venv-diarization" / "Scripts" / "python.exe",
+        root / ".venv-diarization" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise DiarizationUnavailable(
+        "Det separate pyannote-miljø mangler. Kør setup-windows.ps1 igen."
+    )
+
+
+def _parse_result(item: dict) -> DiarizationResult:
+    source = Path(str(item["source"])).resolve()
+    segments = tuple(
+        Segment(float(seg["start"]), float(seg["end"]), str(seg["speaker"]))
+        for seg in item.get("segments", [])
+    )
+    speakers = tuple(
+        Speaker(
+            source=source,
+            label=str(speaker["label"]),
+            duration=float(speaker.get("duration", 0.0)),
+            embedding=(
+                tuple(float(v) for v in speaker["embedding"])
+                if speaker.get("embedding") is not None
+                else None
+            ),
+        )
+        for speaker in item.get("speakers", [])
+    )
+    return DiarizationResult(source, segments, speakers)
+
+
+def diarize_many(audios: list[Path]) -> list[DiarizationResult]:
+    """Run all files through one CPU-only pyannote subprocess/model load.
+
+    Chatterbox and current pyannote have incompatible torch requirements, so
+    diarization deliberately lives in `.venv-diarization`. This also ensures
+    pyannote cannot consume GPU VRAM that is reserved for voice generation.
+    """
+    if not audios:
+        return []
+    worker = Path(__file__).with_name("pyannote_worker.py")
+    cmd = [str(_worker_python()), str(worker), *(str(p.resolve()) for p in audios)]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=max(60.0, float(os.getenv("VOICERIG_DIARIZATION_TIMEOUT_SECONDS", "1800"))),
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        raise DiarizationUnavailable(f"Speaker-analysen kunne ikke startes: {exc}") from exc
+
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "ukendt pyannote-fejl").strip()
+        raise DiarizationUnavailable(
+            "Speaker-analyse kunne ikke gennemføres. Første opsætning kan kræve "
+            f"HF_TOKEN og accept af community-1-vilkårene. {detail[:500]}"
+        )
+
+    payload_line = next(
+        (line for line in reversed(proc.stdout.splitlines()) if line.startswith(_MARKER)),
+        None,
+    )
+    if payload_line is None:
+        raise DiarizationUnavailable("pyannote-worker returnerede intet gyldigt resultat.")
+    try:
+        raw = json.loads(payload_line[len(_MARKER):])
+        results = [_parse_result(item) for item in raw]
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise DiarizationUnavailable("pyannote-worker returnerede ugyldige data.") from exc
+    if len(results) != len(audios):
+        raise DiarizationUnavailable("pyannote-worker returnerede forkert antal resultater.")
+    return results
 
 
 def diarize(audio: Path) -> DiarizationResult:
-    """Run local community-1 diarization and retain speaker embeddings.
-
-    CPU is the default on purpose so the single GPU remains available for
-    Chatterbox. The pipeline is cached across files and serialized because it is
-    expensive shared model state.
-    """
-    pipeline = _get_pipeline()
-    try:
-        with _PIPELINE_RUN_LOCK:
-            output = pipeline(str(audio))
-    except Exception as exc:  # pragma: no cover - model/runtime specific
-        raise DiarizationUnavailable("Speaker-analysen fejlede under kørsel.") from exc
-
-    timeline = getattr(output, "exclusive_speaker_diarization", None)
-    if timeline is None:
-        timeline = output.speaker_diarization
-
-    segments = tuple(
-        Segment(float(turn.start), float(turn.end), str(speaker))
-        for turn, speaker in timeline
-    )
-    totals: dict[str, float] = {}
-    for seg in segments:
-        totals[seg.speaker] = totals.get(seg.speaker, 0.0) + seg.duration
-
-    labels = list(output.speaker_diarization.labels())
-    raw_embeddings = getattr(output, "speaker_embeddings", None)
-    speakers: list[Speaker] = []
-    for idx, label in enumerate(labels):
-        embedding = None
-        if raw_embeddings is not None and idx < len(raw_embeddings):
-            values = raw_embeddings[idx]
-            embedding = tuple(float(v) for v in values)
-        speakers.append(Speaker(audio, str(label), totals.get(str(label), 0.0), embedding))
-
-    return DiarizationResult(audio, segments, tuple(speakers))
+    return diarize_many([audio])[0]
 
 
 def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:

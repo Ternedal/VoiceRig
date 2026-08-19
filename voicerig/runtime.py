@@ -9,6 +9,9 @@ from voicerig.model_contract import (
     CHATTERBOX_ENGINE,
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
+    DIARIZATION_TORCH_VERSION,
+    DIARIZATION_TORCHAUDIO_VERSION,
+    DIARIZATION_TORCHCODEC_VERSION,
     MODEL_READINESS_SCHEMA,
     PYANNOTE_MODEL_ID,
     PYANNOTE_PACKAGE_VERSION,
@@ -75,13 +78,17 @@ def model_warmup_status() -> dict:
             "marker": str(marker),
             "detail": "Model-readiness-filen er beskadiget. Kør setup-windows.ps1 igen.",
         }
+    diarization = payload.get("diarization") or {}
     expected = (
         payload.get("schema") == MODEL_READINESS_SCHEMA
         and (payload.get("chatterbox") or {}).get("engine") == CHATTERBOX_ENGINE
         and (payload.get("chatterbox") or {}).get("model") == CHATTERBOX_MODEL
         and (payload.get("chatterbox") or {}).get("revision") == CHATTERBOX_SOURCE_REVISION
-        and (payload.get("diarization") or {}).get("package_version") == PYANNOTE_PACKAGE_VERSION
-        and (payload.get("diarization") or {}).get("model") == PYANNOTE_MODEL_ID
+        and diarization.get("package_version") == PYANNOTE_PACKAGE_VERSION
+        and diarization.get("model") == PYANNOTE_MODEL_ID
+        and diarization.get("torch_version") == DIARIZATION_TORCH_VERSION
+        and diarization.get("torchaudio_version") == DIARIZATION_TORCHAUDIO_VERSION
+        and diarization.get("torchcodec_version") == DIARIZATION_TORCHCODEC_VERSION
     )
     if not expected:
         return {
@@ -94,7 +101,7 @@ def model_warmup_status() -> dict:
         "marker": str(marker),
         "verified_at": payload.get("verified_at"),
         "chatterbox": payload.get("chatterbox"),
-        "diarization": payload.get("diarization"),
+        "diarization": diarization,
         "detail": None,
     }
 

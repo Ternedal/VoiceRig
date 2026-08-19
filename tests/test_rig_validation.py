@@ -16,6 +16,11 @@ def test_preflight_collects_runtime_blockers(monkeypatch):
     )
     monkeypatch.setattr(rv.shutil, "which", lambda name: None if name == "ffmpeg" else "/bin/git")
     monkeypatch.setattr(rv, "_module_available", lambda name: name == "torchaudio")
+    monkeypatch.setattr(
+        rv,
+        "_probe_diarization_runtime",
+        lambda: {"ok": False, "python": "python", "detail": "pyannote missing"},
+    )
 
     report = rv.preflight()
 
@@ -23,6 +28,7 @@ def test_preflight_collects_runtime_blockers(monkeypatch):
     assert "CUDA mangler" in report["blockers"]
     assert "FFmpeg blev ikke fundet på PATH." in report["blockers"]
     assert "chatterbox-tts er ikke installeret i hovedmiljøet." in report["blockers"]
+    assert any("pyannote CPU-runtime" in item for item in report["blockers"])
     assert report["warnings"] == ["lav fri VRAM"]
 
 
@@ -39,11 +45,17 @@ def test_preflight_passes_when_all_dependencies_are_ready(monkeypatch):
     )
     monkeypatch.setattr(rv.shutil, "which", lambda _name: "/available")
     monkeypatch.setattr(rv, "_module_available", lambda _name: True)
+    monkeypatch.setattr(
+        rv,
+        "_probe_diarization_runtime",
+        lambda: {"ok": True, "python": "python", "detail": "4.0.7\n2.8.0+cpu"},
+    )
 
     report = rv.preflight()
 
     assert report["ok"] is True
     assert report["blockers"] == []
+    assert report["checks"]["diarization"] is True
 
 
 def test_modelrig_probe_reports_tts(monkeypatch):

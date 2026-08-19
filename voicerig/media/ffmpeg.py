@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import wave
 from pathlib import Path
 
 
@@ -47,4 +48,54 @@ def cut_wav(source: Path, target: Path, start_s: float, duration_s: float, sampl
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise FFmpegError((proc.stderr or "Kunne ikke klippe reference").strip()[:500])
+    return target
+
+
+def stitch_wav_segments(
+    source: Path,
+    target: Path,
+    segments: list[tuple[float, float]],
+    *,
+    gap_ms: int = 80,
+) -> Path:
+    """Join exact clean regions from one canonical mono PCM WAV.
+
+    The gaps between diarized turns are deliberately *not* copied because they
+    may contain another speaker. A tiny silence separator avoids hard sample
+    discontinuities between otherwise non-contiguous utterances.
+    """
+    if not segments:
+        raise FFmpegError("Ingen talesegmenter at samle til reference.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(source), "rb") as src:
+        if src.getnchannels() != 1 or src.getsampwidth() != 2:
+            raise FFmpegError("Reference-stitching kræver canonical mono PCM16 WAV.")
+        rate = src.getframerate()
+        if rate <= 0:
+            raise FFmpegError("Reference-WAV har ugyldig sample rate.")
+        silence = b"\x00\x00" * max(0, int(rate * gap_ms / 1000))
+        chunks: list[bytes] = []
+        total_frames = src.getnframes()
+        for start_s, duration_s in segments:
+            start = max(0, min(total_frames, int(max(0.0, start_s) * rate)))
+            frames = max(1, int(max(0.05, duration_s) * rate))
+            frames = min(frames, max(0, total_frames - start))
+            if frames <= 0:
+                continue
+            src.setpos(start)
+            raw = src.readframes(frames)
+            if raw:
+                chunks.append(raw)
+        if not chunks:
+            raise FFmpegError("De valgte talesegmenter indeholdt ingen lyd.")
+        with wave.open(str(target), "wb") as dst:
+            dst.setnchannels(1)
+            dst.setsampwidth(2)
+            dst.setframerate(rate)
+            for idx, raw in enumerate(chunks):
+                if idx:
+                    dst.writeframes(silence)
+                dst.writeframes(raw)
+    if not target.exists() or target.stat().st_size < 128:
+        raise FFmpegError("Den samlede reference blev tom.")
     return target

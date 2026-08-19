@@ -17,7 +17,7 @@ from voicerig.analysis.diarization import (
     segments_for_cluster,
     speaker_clusters,
 )
-from voicerig.analysis.reference import select_reference
+from voicerig.analysis.reference import ReferenceCandidate, rank_references
 from voicerig.config import allow_undiarized_fallback
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.media.audio import validate_wav
@@ -58,7 +58,6 @@ def _preview_parts(segments, target_s: float = 4.0) -> list[tuple[float, float]]
 
 
 def _speaker_anchor(wavs: list[Path], source: Path, segments) -> str:
-    """Stable-enough hidden UI anchor: input index + midpoint of a clean turn."""
     try:
         source_index = wavs.index(source)
     except ValueError as exc:
@@ -133,6 +132,15 @@ def _speaker_choices(
     return choices
 
 
+def _materialize_reference(candidate: ReferenceCandidate, target: Path) -> Path:
+    if candidate.parts:
+        stitch_wav_segments(candidate.source, target, list(candidate.parts))
+    else:
+        cut_wav(candidate.source, target, candidate.start, candidate.duration)
+    validate_wav(target, min_duration_s=5.4, max_duration_s=11.5, require_audible=True)
+    return target
+
+
 def create_voice(
     name: str,
     sources: list[Path],
@@ -196,13 +204,12 @@ def create_voice(
                 ) from exc
             diarizations = {}
 
-        candidate = select_reference(wavs, diarizations)
-        reference = work / "reference.wav"
-        if candidate.parts:
-            stitch_wav_segments(candidate.source, reference, list(candidate.parts))
-        else:
-            cut_wav(candidate.source, reference, candidate.start, candidate.duration)
-        validate_wav(reference, min_duration_s=5.4, max_duration_s=11.5, require_audible=True)
+        ranked = rank_references(wavs, diarizations, limit=4)
+        reference = _materialize_reference(ranked[0], work / "reference.wav")
+        alternatives: list[Path] = []
+        for idx, candidate in enumerate(ranked[1:4], start=1):
+            target = work / f"reference-alt-{idx:02d}.wav"
+            alternatives.append(_materialize_reference(candidate, target))
 
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"
@@ -211,7 +218,15 @@ def create_voice(
         validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
         package = output_dir / f"{slugify(name)}.mrvoice"
-        build_package(name, language, reference, conditioning, preview, package)
+        build_package(
+            name,
+            language,
+            reference,
+            conditioning,
+            preview,
+            package,
+            alternatives=alternatives,
+        )
 
         saved_reference = output_dir / f"{slugify(name)}-reference.wav"
         shutil.copy2(reference, saved_reference)

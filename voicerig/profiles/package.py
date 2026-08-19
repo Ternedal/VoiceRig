@@ -27,6 +27,8 @@ _MAX_CONDITIONING_BYTES = 64 * 1024 * 1024
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
+_VOICE_ID = re.compile(r"^[a-z0-9æøå_-]{1,160}$")
+_REFERENCE_PAYLOAD = re.compile(r"^references/candidate_0[1-5]\.wav$")
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,15 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_package(name: str, language: str, reference: Path, conditioning: Path, preview: Path, output: Path, alternatives: list[Path] | None = None) -> Path:
+def build_package(
+    name: str,
+    language: str,
+    reference: Path,
+    conditioning: Path,
+    preview: Path,
+    output: Path,
+    alternatives: list[Path] | None = None,
+) -> Path:
     alternatives = alternatives or []
     voice_id = f"{slugify(name)}-{uuid.uuid4().hex[:8]}"
     manifest = Manifest(
@@ -70,10 +80,18 @@ def build_package(name: str, language: str, reference: Path, conditioning: Path,
             "model": CHATTERBOX_MODEL,
             "revision": CHATTERBOX_SOURCE_REVISION,
         },
-        files={"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"},
+        files={
+            "reference": "reference.wav",
+            "conditioning": "conditioning.pt",
+            "preview": "preview.wav",
+        },
         defaults={"exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8},
     )
-    files: list[tuple[Path, str]] = [(reference, "reference.wav"), (conditioning, "conditioning.pt"), (preview, "preview.wav")]
+    files: list[tuple[Path, str]] = [
+        (reference, "reference.wav"),
+        (conditioning, "conditioning.pt"),
+        (preview, "preview.wav"),
+    ]
     for idx, alt in enumerate(alternatives[:5], start=1):
         files.append((alt, f"references/candidate_{idx:02d}.wav"))
     checksums = {arc: sha256(src) for src, arc in files}
@@ -92,7 +110,7 @@ def _member_limit(name: str) -> int:
         return _MAX_METADATA_BYTES
     if name == "conditioning.pt":
         return _MAX_CONDITIONING_BYTES
-    if name in {"reference.wav", "preview.wav"} or name.startswith("references/"):
+    if name in {"reference.wav", "preview.wav"} or _REFERENCE_PAYLOAD.fullmatch(name):
         return _MAX_WAV_BYTES
     return 0
 
@@ -110,7 +128,7 @@ def _validate_archive_shape(infos: list[zipfile.ZipInfo]) -> list[str]:
         path = Path(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name:
             raise ValueError("Ugyldig sti i .mrvoice-pakken.")
-        if name not in _ALLOWED_TOP_LEVEL and not name.startswith("references/"):
+        if name not in _ALLOWED_TOP_LEVEL and not _REFERENCE_PAYLOAD.fullmatch(name):
             raise ValueError(f"Ukendt fil i .mrvoice-pakken: {name}")
         if info.flag_bits & 0x1:
             raise ValueError("Krypterede filer understøttes ikke i .mrvoice.")
@@ -152,7 +170,9 @@ def _validate_manifest(manifest) -> dict:
     if manifest.get("format") != FORMAT or manifest.get("format_version") != FORMAT_VERSION:
         raise ValueError("Ikke-understøttet .mrvoice-format.")
 
-    _nonempty_string(manifest.get("id"), "id", 160)
+    voice_id = _nonempty_string(manifest.get("id"), "id", 160)
+    if not _VOICE_ID.fullmatch(voice_id):
+        raise ValueError("Manifestets id er ugyldigt; brug kun lowercase bogstaver, tal, æøå, _ og -.")
     _nonempty_string(manifest.get("name"), "name", 160)
     language = _nonempty_string(manifest.get("language"), "language", 16)
     if not _LANGUAGE.fullmatch(language):
@@ -169,12 +189,20 @@ def _validate_manifest(manifest) -> dict:
         if not _HEX40.fullmatch(revision):
             raise ValueError("Manifestets engine.revision er ugyldig.")
 
-    expected_map = {"reference": "reference.wav", "conditioning": "conditioning.pt", "preview": "preview.wav"}
+    expected_map = {
+        "reference": "reference.wav",
+        "conditioning": "conditioning.pt",
+        "preview": "preview.wav",
+    }
     if manifest.get("files") != expected_map:
         raise ValueError("Manifestets filreferencer matcher ikke .mrvoice v1-kontrakten.")
 
     defaults = manifest.get("defaults")
-    if not isinstance(defaults, dict) or set(defaults) != {"exaggeration", "cfg_weight", "temperature"}:
+    if not isinstance(defaults, dict) or set(defaults) != {
+        "exaggeration",
+        "cfg_weight",
+        "temperature",
+    }:
         raise ValueError("Manifestets TTS-defaults matcher ikke .mrvoice v1-kontrakten.")
     _bounded_number(defaults, "exaggeration", 0.0, 2.0)
     _bounded_number(defaults, "cfg_weight", 0.0, 2.0)
@@ -190,17 +218,23 @@ def validate_package(package: Path) -> dict:
         if missing:
             raise ValueError(f"Manglende filer i .mrvoice: {sorted(missing)}")
         try:
-            manifest = json.loads(zf.read("manifest.json"), parse_constant=_json_no_constants)
+            manifest = json.loads(
+                zf.read("manifest.json"), parse_constant=_json_no_constants
+            )
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("manifest.json er ugyldig JSON.") from exc
         _validate_manifest(manifest)
         try:
-            checksums = json.loads(zf.read("checksums.json"), parse_constant=_json_no_constants)
+            checksums = json.loads(
+                zf.read("checksums.json"), parse_constant=_json_no_constants
+            )
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("checksums.json er ugyldig JSON.") from exc
         if not isinstance(checksums, dict):
             raise ValueError("checksums.json skal indeholde et JSON-objekt.")
-        payloads = {name for name in names if name not in {"manifest.json", "checksums.json"}}
+        payloads = {
+            name for name in names if name not in {"manifest.json", "checksums.json"}
+        }
         if set(checksums) != payloads:
             raise ValueError("Checksums dækker ikke præcis alle payload-filer.")
         for name, expected in checksums.items():

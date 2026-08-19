@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+voicerig-data/
+*.mrvoice
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.mkv
+.DS_Store

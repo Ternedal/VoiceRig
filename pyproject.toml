@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voicerig"
+version = "0.1.0"
+description = "Local-first voice profile builder for ModelRig"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Ternedal" }]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "python-multipart>=0.0.9",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+voice = [
+  "chatterbox-tts",
+  "pyannote.audio",
+]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+voicerig = "voicerig.app.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["voicerig"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

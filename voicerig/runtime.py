@@ -11,6 +11,7 @@ from voicerig.model_contract import (
     CHATTERBOX_SOURCE_REVISION,
     MODEL_READINESS_SCHEMA,
     PYANNOTE_MODEL_ID,
+    PYANNOTE_PACKAGE_VERSION,
 )
 
 # A 12 GB consumer GPU usually exposes slightly less than the marketing number
@@ -79,6 +80,7 @@ def model_warmup_status() -> dict:
         and (payload.get("chatterbox") or {}).get("engine") == CHATTERBOX_ENGINE
         and (payload.get("chatterbox") or {}).get("model") == CHATTERBOX_MODEL
         and (payload.get("chatterbox") or {}).get("revision") == CHATTERBOX_SOURCE_REVISION
+        and (payload.get("diarization") or {}).get("package_version") == PYANNOTE_PACKAGE_VERSION
         and (payload.get("diarization") or {}).get("model") == PYANNOTE_MODEL_ID
     )
     if not expected:

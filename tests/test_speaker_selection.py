@@ -28,6 +28,11 @@ def _fake_extract(_source: Path, target: Path):
     return target
 
 
+def _fake_cut(_source: Path, target: Path, _start: float, duration: float):
+    _write_tone(target, seconds=duration)
+    return target
+
+
 def _ambiguous_results(wavs: list[Path]):
     wav = wavs[0]
     return [
@@ -70,6 +75,7 @@ def test_explicit_choice_builds_selected_voice_without_ambiguity_loop(tmp_path: 
     source = tmp_path / "interview.mp4"
     source.write_bytes(b"media")
     monkeypatch.setattr(pipeline, "extract_mono_wav", _fake_extract)
+    monkeypatch.setattr(pipeline, "cut_wav", _fake_cut)
     monkeypatch.setattr(pipeline, "diarize_many", _ambiguous_results)
 
     class FakeEngine:

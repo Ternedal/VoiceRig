@@ -8,6 +8,7 @@ def test_ambiguous_speaker_response_is_structured_409(monkeypatch):
     choices = [
         {
             "choice": 1,
+            "anchor": "0:3.000",
             "label": "Stemme 1",
             "speech_seconds": 8.0,
             "preview_duration": 4.0,
@@ -15,6 +16,7 @@ def test_ambiguous_speaker_response_is_structured_409(monkeypatch):
         },
         {
             "choice": 2,
+            "anchor": "0:9.000",
             "label": "Stemme 2",
             "speech_seconds": 7.5,
             "preview_duration": 4.0,

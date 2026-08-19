@@ -13,6 +13,7 @@ from voicerig.model_contract import (
     CHATTERBOX_ENGINE,
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
+    DIARIZATION_AUDIO_INPUT,
     DIARIZATION_TORCH_VERSION,
     DIARIZATION_TORCHAUDIO_VERSION,
     DIARIZATION_TORCHCODEC_VERSION,
@@ -30,7 +31,6 @@ def _version_matches(actual, expected: str) -> bool:
 
 
 def warm_chatterbox() -> dict:
-    """Download/load the exact Chatterbox V3 runtime and verify Danish support."""
     model = _shared_model()
     try:
         supported = model.get_supported_languages()
@@ -50,7 +50,6 @@ def warm_chatterbox() -> dict:
 
 
 def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
-    """Download/load pyannote community-1 in the isolated CPU-only runtime."""
     python = _worker_python()
     worker = Path(__file__).resolve().parent / "analysis" / "pyannote_worker.py"
     env = os.environ.copy()
@@ -73,10 +72,7 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
             "Hugging Face-vilkår og sæt HF_TOKEN i .env (eller log ind med Hugging "
             f"Face CLI), og kør setup igen. Detalje: {detail}"
         )
-    line = next(
-        (item for item in reversed(proc.stdout.splitlines()) if item.startswith(_READY_MARKER)),
-        None,
-    )
+    line = next((item for item in reversed(proc.stdout.splitlines()) if item.startswith(_READY_MARKER)), None)
     if line is None:
         raise RuntimeError("pyannote-worker bekræftede ikke model-warmup.")
     try:
@@ -91,12 +87,13 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
         and _version_matches(payload.get("torch_version"), DIARIZATION_TORCH_VERSION)
         and _version_matches(payload.get("torchaudio_version"), DIARIZATION_TORCHAUDIO_VERSION)
         and payload.get("torchcodec_version") == DIARIZATION_TORCHCODEC_VERSION
+        and payload.get("audio_input") == DIARIZATION_AUDIO_INPUT
         and payload.get("cuda_available") is False
     )
     if not expected:
         raise RuntimeError(
-            "pyannote-worker rapporterede en uventet CPU-runtime. "
-            "Kør setup-windows.ps1 igen, så den verificerede pyannote/torch-stack gendannes."
+            "pyannote-worker rapporterede en uventet CPU-runtime eller audio-input-kontrakt. "
+            "Kør setup-windows.ps1 igen."
         )
     return payload
 
@@ -117,6 +114,7 @@ def _write_readiness_marker(report: dict) -> Path:
             "torch_version": DIARIZATION_TORCH_VERSION,
             "torchaudio_version": DIARIZATION_TORCHAUDIO_VERSION,
             "torchcodec_version": DIARIZATION_TORCHCODEC_VERSION,
+            "audio_input": DIARIZATION_AUDIO_INPUT,
         },
         "warmup": report,
     }
@@ -127,9 +125,6 @@ def _write_readiness_marker(report: dict) -> Path:
 
 
 def warm_models() -> dict:
-    # setup-windows.ps1 runs this module directly. Reload the repo-local .env so
-    # HF_TOKEN and privacy/configuration defaults are guaranteed to be present
-    # before either model loader starts. Existing OS/session vars still win.
     load_local_env()
     chatterbox = warm_chatterbox()
     diarization = warm_diarization()

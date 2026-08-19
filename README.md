@@ -7,32 +7,27 @@ VoiceRig laver en portabel ModelRig-stemmeprofil ud fra almindelige lyd- og vide
 ## MVP
 
 - Læser lyd/video gennem FFmpeg.
-- Finder et godt referenceklip automatisk.
-- Kan samle flere korte, rene taleturns fra samme person til én 6–10 sekunders reference uden at kopiere lyd fra hullerne mellem dem.
+- Finder gode referenceklip automatisk og kan stitch flere rene taleturns uden at kopiere lyd fra hullerne mellem dem.
 - Bruger lokal `pyannote/speaker-diarization-community-1` til flere talere.
 - Matcher samme speaker på tværs af flere klip via varighedsvægtede speaker-centroids.
-- Vælger automatisk ved tydelig dominans. Ved reel tvivl vises op til fire afspillelige stemmeprøver, og brugeren klikker **Brug denne stemme**.
-- Det manuelle valg bindes til et konkret taleturn-anker (inputfil + tidspunkt), så genanalysen genfinder samme person i stedet for at stole på et ustabilt “Stemme 1/2”-rangnummer.
-- Fejler lukket hvis speaker-analysen ikke kan køre. Undiarized fallback findes kun som eksplicit udvikler-escape hatch.
-- Bygger Chatterbox Multilingual V3 voice conditioning.
-- Genererer dansk preview.
-- Pakker `reference.wav`, `conditioning.pt`, `preview.wav`, manifest og checksums i `.mrvoice`.
+- Vælger automatisk ved tydelig dominans. Ved reel tvivl vises op til fire afspillelige stemmeprøver med **Brug denne stemme**.
+- Fejler lukket hvis speaker-analysen ikke kan køre; undiarized fallback er kun en udvikler-escape hatch.
+- Bygger Chatterbox Multilingual V3 conditioning og dansk preview.
+- Pakker primær reference, conditioning, preview og op til tre diverse backup-references i `.mrvoice`.
 - Installerer automatisk i den lokale ModelRig voice-mappe.
-- Kører en lokal TTS-sidecar, som prebuilt ModelRig kan bruge direkte.
-- Fungerer local-first; kildefiler sendes ikke til en cloudtjeneste af VoiceRig.
+- Kører en lokal TTS-sidecar, som ModelRig kan bruge uden at loade en ekstra Chatterbox-model i workerens VRAM.
+- Fungerer local-first; kildefiler sendes ikke til cloud af VoiceRig.
 
 ## Hardwaremål
 
-VoiceRig er designet til en enkelt NVIDIA-GPU med 12 GB VRAM.
+VoiceRig v1 er målrettet en enkelt NVIDIA-GPU i **12 GB-klassen**, herunder RTX 3060 12 GB.
 
-På Windows er runtime bevidst delt:
+Windows-runtime er bevidst delt:
 
-- `.venv`: VoiceRig + Chatterbox + PyTorch 2.6.0 med CUDA 12.6.
-- `.venv-diarization`: pyannote + nyere CPU-only PyTorch.
+- `.venv`: VoiceRig + verificeret Chatterbox Multilingual V3 source-revision + Torch/Torchaudio 2.6.0 CUDA 12.6.
+- `.venv-diarization`: pyannote.audio 4.0.7 + Torch 2.8.0 + Torchaudio 2.8.0 + TorchCodec 0.7.0, CPU-only.
 
-Det er nødvendigt, fordi den aktuelle Chatterbox-version pinner PyTorch 2.6.0,
-mens den aktuelle pyannote-version kræver PyTorch 2.8 eller nyere. Samtidig
-sikrer splittet, at speaker-analyse ikke bruger GPU-VRAM.
+Speaker-analyse bruger dermed ikke GPU-VRAM, som reserveres til Chatterbox.
 
 ## Krav
 
@@ -40,35 +35,39 @@ sikrer splittet, at speaker-analyse ikke bruger GPU-VRAM.
 - Python 3.11
 - FFmpeg på `PATH`
 - Git på `PATH`
-- NVIDIA-GPU med fungerende driver til CUDA PyTorch
+- NVIDIA-GPU med fungerende CUDA-driver
 
 ## Installation på Windows
-
-Den understøttede installationsvej er:
 
 ```powershell
 .\setup-windows.ps1
 .\start-windows.ps1
 ```
 
-`setup-windows.ps1` opretter begge isolerede Python-miljøer, installerer den
-officielle CUDA-version af PyTorch til Chatterbox, installerer CPU-only
-pyannote-runtime, verificerer at CUDA faktisk virker og sætter VoiceRig til
-per-user autostart.
+`setup-windows.ps1`:
 
-`pyannote` community-1 kræver ved første model-download, at modelvilkårene er
-accepteret og at `HF_TOKEN` er sat. Når modellerne ligger lokalt, kører selve
-analysen lokalt.
+1. opretter begge isolerede Python-miljøer,
+2. installerer den verificerede Chatterbox V3-kilde og CUDA-runtime,
+3. installerer den eksakt pinnede CPU-only pyannote-stack,
+4. opretter `.env` fra `.env.example` hvis nødvendigt,
+5. downloader og **loader begge modeller som warmup**,
+6. verificerer dansk V3, CPU-only diarization og modelversionerne,
+7. skriver `voicerig-data/model-readiness.json`,
+8. sætter per-user autostart.
 
-## Manuel udviklerinstallation
+Voice creation forbliver låst, indtil readiness-markeret matcher den aktuelle VoiceRig-modelkontrakt.
 
-Hovedmiljø og diarization-miljø må **ikke** flettes sammen. Se
-`docs/ARCHITECTURE.md` og `setup-windows.ps1` for den autoritative dependency-
-opdeling. En simpel `pip install -e ".[voice,diarization]"` er bevidst ikke en
-understøttet konfiguration.
+### Første pyannote-download
 
-`VOICERIG_ALLOW_UNDIARIZED=1` må kun bruges i kontrollerede udviklertests med
-kendt single-speaker-materiale. Normal produktadfærd er fail-closed.
+`community-1` kræver, at modellens vilkår accepteres på Hugging Face. Sæt derefter et read-token i repoets `.env`:
+
+```text
+HF_TOKEN=...
+```
+
+VoiceRig loader `.env` selv; eksisterende Windows/session-miljøvariabler vinder over filen.
+
+`PYANNOTE_METRICS_ENABLED=0` er standard, så pyannote-telemetry er slået fra, medmindre den eksplicit aktiveres.
 
 ## Start
 
@@ -76,66 +75,58 @@ kendt single-speaker-materiale. Normal produktadfærd er fail-closed.
 .\start-windows.ps1
 ```
 
-UI åbner på `http://127.0.0.1:8765`. Knappen **Opret stemme** aktiveres først,
-når den lokale hardware-readiness er grøn.
+UI åbner på `http://127.0.0.1:8765`. **Opret stemme** aktiveres først, når lokal hardware- og model-readiness er grøn.
 
-Normalflowet kræver kun filer + navn. Hvis flere personer fylder omtrent lige
-meget, stopper VoiceRig før Chatterbox bliver loadet og viser korte lydprøver:
+Normalflowet kræver kun filer + navn. Ved reel flerspeaker-tvivl vises korte prøver:
 
 ```text
 Stemme 1   [▶]   [Brug denne stemme]
 Stemme 2   [▶]   [Brug denne stemme]
 ```
 
-Efter valget genbruges de samme filer automatisk, og resten af voice-buildet
-fortsætter uden yderligere indstillinger.
+Valget bindes til et konkret taleturn i materialet, hvorefter resten af buildet fortsætter automatisk.
+
+## `.mrvoice`
+
+Profiler er data-only ZIP-containere med `.mrvoice`-extension. Nye profiler registrerer den eksakte Chatterbox source-revision, der skabte `conditioning.pt`.
+
+Hvis en senere VoiceRig-version bruger en anden Chatterbox-revision, genbruger runtime **ikke blindt** den gamle serialiserede conditioning. Den regenererer conditioning fra `reference.wav`, så profilen forbliver portabel.
+
+Se `docs/MRVOICE_SPEC.md`.
 
 ## ModelRig
 
-Når ModelRig er lokal, kopierer VoiceRig automatisk `.mrvoice` til
-`~/.kaliv/voices/` og gør den til default. ModelRig behøver ikke være startet,
-mens stemmen oprettes.
+På samme maskine installeres `.mrvoice` atomisk i `~/.kaliv/voices/` og markeres som default. ModelRig behøver ikke være startet under selve voice-buildet.
 
-En prebuilt ModelRig-worker kan bruge VoiceRigs lokale TTS-sidecar på
-`127.0.0.1:8765`; en Python-worker med Chatterbox installeret kan også bruge
-`.mrvoice` in-process.
+ModelRig `main` kan derefter bruge VoiceRigs loopback-sidecar på `127.0.0.1:8765` og beholder Piper som fallback.
 
 ## Fysisk rig-validering
 
-Efter installation kan miljøet kontrolleres uden at bygge en stemme:
+Preflight:
 
 ```powershell
 .\validate-rig.ps1
 ```
 
-Preflight kontrollerer CUDA, GPU/VRAM, FFmpeg, Git, Chatterbox/torchaudio og
-starter den separate diarization-Python for at bevise, at `pyannote.audio` kan
-importeres og at dens Torch-runtime faktisk er CPU-only. Resultatet gemmes i
-`validation-report.json`.
-
-Den fulde accepttest bruger et eller flere rigtige lyd-/videoklip:
+Fuld produkt-E2E med rigtige klip:
 
 ```powershell
 .\validate-rig.ps1 -Source "C:\klip\stemme1.mp4","C:\klip\stemme2.m4a"
 ```
 
-Den fulde test bygger en `.mrvoice`, kræver at speaker-diarization faktisk blev
-brugt, installerer profilen lokalt, laver en dansk testsyntese og måler buildtid,
-syntesetid samt peak allocated/reserved VRAM. Output gemmes i
-`validation-output\`.
+Den fulde validator bruger den **kørende VoiceRig-service** til både build og syntese. Dermed måles peak VRAM i den samme langlivede Chatterbox-proces, som produktet faktisk bruger.
 
-Hvis ModelRig-workeren også skal være en hård del af accepttesten:
+Hvis ModelRig-integration også skal være en hård gate, sæt et gyldigt parret device-token:
 
 ```powershell
+$env:MODELRIG_TOKEN = "..."
 .\validate-rig.ps1 -Source "C:\klip\stemme1.mp4" -RequireModelRig
 ```
 
-I den tilstand skal `http://127.0.0.1:8099/capabilities` være tilgængelig og
-rapportere `tts=true`, ellers fejler valideringen.
+Her spørges den autentificerede ModelRig-backend på `http://127.0.0.1:8080/api/v1/health/full`. PASS kræver bl.a. `checks.tts.provider == "voicerig"` og at ModelRig bruger den `.mrvoice`, testen netop byggede.
+
+Den komplette procedure og Definition of Done ligger i `docs/RIG_ACCEPTANCE.md`.
 
 ## Status
 
-MVP-koden og package-/sidecar-/Windows-kontrakter er dækket af CI. Den sidste
-acceptgate er fysisk end-to-end validering med rigtige lyd-/videoklip på den
-faktiske rig: modeldownload, voice creation, peak VRAM, genereringstid,
-stemmelighed og ModelRig-afspilning.
+Softwarekontrakterne er CI-dækkede. PR #1 forbliver draft, indtil den fysiske acceptance på RTX 3060 12 GB har bevist rigtig modeldownload, diarization, voice-build, server-processens peak VRAM, manuel stemmelighed/lydkvalitet, ModelRig-provider og Piper fallback.

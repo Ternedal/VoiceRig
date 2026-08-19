@@ -18,6 +18,19 @@ def test_piper_fallback_script_is_fail_safe_and_restores_voicerig():
     assert "Piper fallback acceptance: PASS" in text
 
 
+def test_piper_fallback_requires_real_worker_wav_on_loopback():
+    text = (ROOT / "test-piper-fallback.ps1").read_text(encoding="utf-8")
+
+    assert '[string]$ModelRigWorkerUrl = "http://127.0.0.1:8099"' in text
+    assert '$WorkerUri.Host -notin @("127.0.0.1", "localhost", "::1")' in text
+    assert '"/voice/tts/synthesize"' in text
+    assert "Invoke-PiperSynthesis" in text
+    assert '$Result.provider -ne "piper"' in text
+    assert '$Magic -ne "RIFF"' in text
+    assert "piper_synthesis = $PiperSynthesis" in text
+    assert "piper-fallback.wav" in text
+
+
 def test_main_rig_validator_only_runs_fallback_when_explicitly_required():
     text = (ROOT / "validate-rig.ps1").read_text(encoding="utf-8")
 
@@ -25,4 +38,5 @@ def test_main_rig_validator_only_runs_fallback_when_explicitly_required():
     assert "-RequirePiperFallback kræver også -RequireModelRig" in text
     assert "$Code -eq 0 -and $RequirePiperFallback" in text
     assert '"test-piper-fallback.ps1"' in text
+    assert "-ModelRigWorkerUrl $ModelRigWorkerUrl" in text
     assert "piper-fallback-report.json" in text

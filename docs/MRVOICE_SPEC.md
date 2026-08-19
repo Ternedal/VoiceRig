@@ -15,17 +15,20 @@ preview.wav
 
 ## Valgfrie backup-references
 
-VoiceRig kan desuden gemme op til fem alternative rene references:
+VoiceRig kan desuden gemme op til fem alternative rene references med **præcis**
+disse navne:
 
 ```text
 references/candidate_01.wav
 references/candidate_02.wav
-...
+references/candidate_03.wav
+references/candidate_04.wav
 references/candidate_05.wav
 ```
 
-VoiceRig v1 producerer normalt højst tre backups. De vælges med en diversitets-
-gate, så samme overlappende 10-sekunders vindue ikke fylder alle backup-slots.
+Andre filer under `references/` er ikke gyldige v1-payloads. VoiceRig v1
+producerer normalt højst tre backups. De vælges med en diversitets-gate, så
+samme overlappende 10-sekunders vindue ikke fylder alle backup-slots.
 Backup-references er en del af checksum-kontrakten og gør det muligt senere at
 regenerere conditioning eller evaluere en ny engine uden de oprindelige video-
 eller lydfiler.
@@ -58,6 +61,17 @@ Et nyt VoiceRig v1-manifest har formen:
   }
 }
 ```
+
+`id` er en intern runtime-identitet og bliver bl.a. brugt som lokalt cache-
+mappenavn. V1 kræver derfor et path-sikkert slug-format:
+
+```text
+^[a-z0-9æøå_-]{1,160}$
+```
+
+Det betyder: lowercase bogstaver, tal, `æøå`, `_` og `-`; ingen slash,
+backslash, punktum, whitespace eller path-segmenter. Importer skal validere id'et
+**før** runtime-materialisering.
 
 `engine.revision` identificerer den eksakte Chatterbox-kilde, der producerede
 den serialiserede `conditioning.pt`. Feltet er valgfrit på formatniveau for at
@@ -100,7 +114,7 @@ ikke kan genbruge stale mutable conditioning-state.
 ## Checksums
 
 `checksums.json` indeholder lowercase SHA-256 for **præcis alle payload-filer**:
-obligatoriske binære filer plus eventuelle `references/*`.
+obligatoriske binære filer plus eventuelle dokumenterede `references/candidate_*.wav`.
 
 `manifest.json` og `checksums.json` hasher ikke sig selv.
 
@@ -112,6 +126,16 @@ formatet entydigt på tværs af TorchAudio-backends.
 
 Den primære reference skal være den reference, der blev brugt til at generere
 `conditioning.pt`. Alternative references er regeneration/evalueringsmateriale.
+
+## Atomisk oprettelse og erstatning
+
+Et build med samme stemmeslug kan erstatte en eksisterende `.mrvoice`. V1-
+implementationen må ikke skrive direkte oven i en kendt god profil.
+
+VoiceRig skriver derfor først en sibling-tempfil, validerer **hele** den nye
+pakke inklusive manifest/checksums og udfører derefter en atomisk `os.replace`.
+Hvis skrivning eller validering fejler, skal den tidligere profil forblive
+byte-for-byte urørt, og tempfilen skal ryddes op.
 
 ## Sikkerhedsgrænser
 
@@ -130,7 +154,9 @@ Importer skal desuden afvise:
 - absolutte paths
 - `..` path traversal
 - backslash-baserede archive paths
+- path-lignende/ugyldige manifest-id'er
 - ukendte payloadnavne
+- andre `references/*` end `candidate_01.wav` … `candidate_05.wav`
 - dublerede archive entries
 - krypterede entries
 - manglende obligatoriske filer

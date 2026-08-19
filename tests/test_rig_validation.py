@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import voicerig.rig_validation as rv
 
 
@@ -85,3 +87,31 @@ def test_modelrig_probe_fails_closed(monkeypatch):
 
     assert report["reachable"] is False
     assert report["tts"] is False
+
+
+def test_speaker_similarity_reports_cosine_without_inventing_threshold(monkeypatch, tmp_path):
+    ref = SimpleNamespace(
+        speakers=(SimpleNamespace(duration=8.0, embedding=(1.0, 0.0)),)
+    )
+    synth = SimpleNamespace(
+        speakers=(SimpleNamespace(duration=7.0, embedding=(0.8, 0.6)),)
+    )
+    monkeypatch.setattr(rv, "diarize_many", lambda _paths: [ref, synth])
+
+    report = rv._measure_speaker_similarity(tmp_path / "ref.wav", tmp_path / "synth.wav")
+
+    assert report["available"] is True
+    assert report["cosine"] == 0.8
+    assert report["calibrated_threshold"] is None
+
+
+def test_speaker_similarity_is_nonfatal_when_embedding_is_missing(monkeypatch, tmp_path):
+    no_embedding = SimpleNamespace(
+        speakers=(SimpleNamespace(duration=8.0, embedding=None),)
+    )
+    monkeypatch.setattr(rv, "diarize_many", lambda _paths: [no_embedding, no_embedding])
+
+    report = rv._measure_speaker_similarity(tmp_path / "ref.wav", tmp_path / "synth.wav")
+
+    assert report["available"] is False
+    assert report["cosine"] is None

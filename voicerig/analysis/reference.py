@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import math
+import struct
+import wave
+from dataclasses import dataclass
+from pathlib import Path
+
+from .diarization import Segment
+
+
+@dataclass(frozen=True)
+class ReferenceCandidate:
+    source: Path
+    start: float
+    duration: float
+    score: float
+    speaker: str | None = None
+
+
+def wav_duration(path: Path) -> float:
+    with wave.open(str(path), "rb") as f:
+        rate = f.getframerate()
+        return f.getnframes() / rate if rate else 0.0
+
+
+def _window_quality(path: Path, start_s: float, duration_s: float) -> float:
+    """Cheap deterministic signal score: reward audible, non-clipped speech-like audio."""
+    with wave.open(str(path), "rb") as f:
+        if f.getsampwidth() != 2 or f.getnchannels() != 1:
+            return 0.0
+        rate = f.getframerate()
+        f.setpos(min(f.getnframes(), int(start_s * rate)))
+        raw = f.readframes(max(1, int(duration_s * rate)))
+    if len(raw) < 2:
+        return 0.0
+    count = len(raw) // 2
+    samples = struct.unpack("<" + "h" * count, raw[: count * 2])
+    if not samples:
+        return 0.0
+    peak = max(abs(x) for x in samples) / 32768.0
+    rms = math.sqrt(sum(float(x) * float(x) for x in samples) / len(samples)) / 32768.0
+    clipped = sum(1 for x in samples if abs(x) >= 32700) / len(samples)
+    audible = min(1.0, rms / 0.08)
+    headroom = max(0.0, 1.0 - max(0.0, peak - 0.95) * 10.0)
+    clip_penalty = max(0.0, 1.0 - clipped * 20.0)
+    return round(audible * headroom * clip_penalty, 4)
+
+
+def select_reference(
+    wavs: list[Path],
+    diarizations: dict[Path, list[Segment]] | None = None,
+    target_s: float = 10.0,
+) -> ReferenceCandidate:
+    diarizations = diarizations or {}
+    candidates: list[ReferenceCandidate] = []
+
+    for wav in wavs:
+        segments = diarizations.get(wav) or []
+        if segments:
+            totals: dict[str, float] = {}
+            for seg in segments:
+                totals[seg.speaker] = totals.get(seg.speaker, 0.0) + seg.duration
+            speaker = max(totals, key=totals.get)
+            speaker_segments = [s for s in segments if s.speaker == speaker]
+            for seg in speaker_segments:
+                if seg.duration < 5.5:
+                    continue
+                dur = min(target_s, seg.duration)
+                score = _window_quality(wav, seg.start, dur)
+                score *= min(1.0, dur / target_s)
+                candidates.append(ReferenceCandidate(wav, seg.start, dur, score, speaker))
+        else:
+            total = wav_duration(wav)
+            if total < 5.5:
+                continue
+            dur = min(target_s, total)
+            step = max(2.0, dur / 2.0)
+            pos = 0.0
+            while pos + 5.5 <= total:
+                actual = min(dur, total - pos)
+                if actual < 5.5:
+                    break
+                score = _window_quality(wav, pos, actual) * min(1.0, actual / target_s)
+                candidates.append(ReferenceCandidate(wav, pos, actual, score, None))
+                pos += step
+
+    if not candidates:
+        raise ValueError("Der er for lidt brugbar tale. Tilføj mindst ca. 6-10 sekunders tydelig tale.")
+    return max(candidates, key=lambda item: item.score)

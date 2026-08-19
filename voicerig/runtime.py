@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+
+from voicerig.config import data_dir
+from voicerig.model_contract import (
+    CHATTERBOX_ENGINE,
+    CHATTERBOX_MODEL,
+    CHATTERBOX_SOURCE_REVISION,
+    MODEL_READINESS_SCHEMA,
+    PYANNOTE_MODEL_ID,
+)
 
 # A 12 GB consumer GPU usually exposes slightly less than the marketing number
 # after unit conversion/runtime reservation. Treat >=11 GiB as the intended
@@ -48,6 +58,45 @@ def _diarization_runtime_present() -> bool:
     )
 
 
+def model_warmup_status() -> dict:
+    marker = data_dir() / "model-readiness.json"
+    if not marker.is_file():
+        return {
+            "verified": False,
+            "marker": str(marker),
+            "detail": "Modellerne er ikke forhåndsverificeret. Kør setup-windows.ps1 igen.",
+        }
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {
+            "verified": False,
+            "marker": str(marker),
+            "detail": "Model-readiness-filen er beskadiget. Kør setup-windows.ps1 igen.",
+        }
+    expected = (
+        payload.get("schema") == MODEL_READINESS_SCHEMA
+        and (payload.get("chatterbox") or {}).get("engine") == CHATTERBOX_ENGINE
+        and (payload.get("chatterbox") or {}).get("model") == CHATTERBOX_MODEL
+        and (payload.get("chatterbox") or {}).get("revision") == CHATTERBOX_SOURCE_REVISION
+        and (payload.get("diarization") or {}).get("model") == PYANNOTE_MODEL_ID
+    )
+    if not expected:
+        return {
+            "verified": False,
+            "marker": str(marker),
+            "detail": "Den verificerede modelcache matcher ikke denne VoiceRig-version. Kør setup-windows.ps1 igen.",
+        }
+    return {
+        "verified": True,
+        "marker": str(marker),
+        "verified_at": payload.get("verified_at"),
+        "chatterbox": payload.get("chatterbox"),
+        "diarization": payload.get("diarization"),
+        "detail": None,
+    }
+
+
 def hardware_status() -> dict:
     status = {
         "chatterbox_device": "cpu",
@@ -86,10 +135,11 @@ def voice_build_readiness() -> dict:
     """Return a human-readable preflight verdict without loading ML models.
 
     Service health and ML readiness are deliberately separate: VoiceRig may be
-    up and able to serve/download existing packages even while CUDA or the
-    isolated diarization environment still needs setup.
+    up and able to serve/download existing packages even while CUDA, the
+    isolated diarization environment, or the preloaded model cache needs setup.
     """
     hw = hardware_status()
+    models = model_warmup_status()
     blockers: list[str] = []
     warnings: list[str] = []
 
@@ -114,11 +164,14 @@ def voice_build_readiness() -> dict:
 
     if not hw.get("diarization_available"):
         blockers.append("Den separate CPU-runtime til speaker-analyse er ikke installeret.")
+    if not models.get("verified"):
+        blockers.append(str(models.get("detail") or "VoiceRig-modellerne er ikke verificeret."))
 
     return {
         "ready": not blockers,
         "profile": "single-nvidia-gpu-12gb-class",
         "hardware": hw,
+        "models": models,
         "blockers": blockers,
         "warnings": warnings,
     }

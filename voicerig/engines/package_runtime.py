@@ -13,6 +13,8 @@ from voicerig.runtime import chatterbox_device
 
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_KEY: tuple[str, str] | None = None
+_VALIDATION_LOCK = threading.Lock()
+_VALIDATION_CACHE: dict[tuple[str, int, int], dict] = {}
 
 
 def modelrig_voices_dir() -> Path:
@@ -20,6 +22,22 @@ def modelrig_voices_dir() -> Path:
     path = Path(value).expanduser().resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _manifest(package: Path) -> dict:
+    stat = package.stat()
+    key = (str(package.resolve()), stat.st_mtime_ns, stat.st_size)
+    with _VALIDATION_LOCK:
+        cached = _VALIDATION_CACHE.get(key)
+        if cached is not None:
+            return cached
+    manifest = validate_package(package)
+    with _VALIDATION_LOCK:
+        path_key = key[0]
+        for old in [item for item in _VALIDATION_CACHE if item[0] == path_key and item != key]:
+            _VALIDATION_CACHE.pop(old, None)
+        _VALIDATION_CACHE[key] = manifest
+    return manifest
 
 
 def resolve_package(voice_package: str | None = None) -> Path:
@@ -31,7 +49,7 @@ def resolve_package(voice_package: str | None = None) -> Path:
         candidate = root / safe
         if not candidate.is_file():
             raise ValueError("Den valgte stemmeprofil findes ikke.")
-        validate_package(candidate)
+        _manifest(candidate)
         return candidate
 
     marker = root / "default.txt"
@@ -40,12 +58,12 @@ def resolve_package(voice_package: str | None = None) -> Path:
         if name and Path(name).name == name and name.endswith(".mrvoice"):
             candidate = root / name
             if candidate.is_file():
-                validate_package(candidate)
+                _manifest(candidate)
                 return candidate
 
     profiles = sorted(root.glob("*.mrvoice"))
     if len(profiles) == 1:
-        validate_package(profiles[0])
+        _manifest(profiles[0])
         return profiles[0]
     if not profiles:
         raise ValueError("Ingen ModelRig-stemmeprofil er installeret.")
@@ -87,7 +105,7 @@ def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> N
 
 
 def synthesize(package: Path, text: str, output: Path) -> dict:
-    manifest = validate_package(package)
+    manifest = _manifest(package)
     device = chatterbox_device()
     model = _shared_model()
     defaults = manifest.get("defaults") or {}
@@ -122,11 +140,14 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
 def status() -> dict:
     try:
         package = resolve_package()
-        manifest = validate_package(package)
+        manifest = _manifest(package)
     except Exception as exc:
         return {"ok": False, "detail": str(exc), "voice": None, "package": None}
 
-    chatterbox_installed = importlib.util.find_spec("chatterbox.mtl_tts") is not None
+    try:
+        chatterbox_installed = importlib.util.find_spec("chatterbox.mtl_tts") is not None
+    except (ImportError, ModuleNotFoundError):
+        chatterbox_installed = False
     if not chatterbox_installed:
         return {
             "ok": False,

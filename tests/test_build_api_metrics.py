@@ -9,6 +9,7 @@ import voicerig.app.main as main
 
 
 def test_voice_build_resets_and_returns_server_process_gpu_metrics(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("VOICERIG_ALLOW_LAN", "1")
     package = tmp_path / "metrics.mrvoice"
     package.write_bytes(b"package")
     reset = {"called": False}

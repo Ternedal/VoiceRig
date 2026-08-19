@@ -9,6 +9,7 @@ from voicerig.model_contract import (
     CHATTERBOX_ENGINE,
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
+    DIARIZATION_AUDIO_INPUT,
     DIARIZATION_TORCH_VERSION,
     DIARIZATION_TORCHAUDIO_VERSION,
     DIARIZATION_TORCHCODEC_VERSION,
@@ -17,9 +18,6 @@ from voicerig.model_contract import (
     PYANNOTE_PACKAGE_VERSION,
 )
 
-# A 12 GB consumer GPU usually exposes slightly less than the marketing number
-# after unit conversion/runtime reservation. Treat >=11 GiB as the intended
-# "12 GB class" target rather than rejecting valid RTX 3060-class cards.
 _TARGET_VRAM_GB = 11.0
 
 
@@ -44,7 +42,6 @@ def chatterbox_device() -> str:
 
 
 def diarization_device() -> str:
-    """Diarization is intentionally isolated in a CPU-only venv/process."""
     return "cpu"
 
 
@@ -65,19 +62,11 @@ def _diarization_runtime_present() -> bool:
 def model_warmup_status() -> dict:
     marker = data_dir() / "model-readiness.json"
     if not marker.is_file():
-        return {
-            "verified": False,
-            "marker": str(marker),
-            "detail": "Modellerne er ikke forhåndsverificeret. Kør setup-windows.ps1 igen.",
-        }
+        return {"verified": False, "marker": str(marker), "detail": "Modellerne er ikke forhåndsverificeret. Kør setup-windows.ps1 igen."}
     try:
         payload = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {
-            "verified": False,
-            "marker": str(marker),
-            "detail": "Model-readiness-filen er beskadiget. Kør setup-windows.ps1 igen.",
-        }
+        return {"verified": False, "marker": str(marker), "detail": "Model-readiness-filen er beskadiget. Kør setup-windows.ps1 igen."}
     diarization = payload.get("diarization") or {}
     expected = (
         payload.get("schema") == MODEL_READINESS_SCHEMA
@@ -89,13 +78,10 @@ def model_warmup_status() -> dict:
         and diarization.get("torch_version") == DIARIZATION_TORCH_VERSION
         and diarization.get("torchaudio_version") == DIARIZATION_TORCHAUDIO_VERSION
         and diarization.get("torchcodec_version") == DIARIZATION_TORCHCODEC_VERSION
+        and diarization.get("audio_input") == DIARIZATION_AUDIO_INPUT
     )
     if not expected:
-        return {
-            "verified": False,
-            "marker": str(marker),
-            "detail": "Den verificerede modelcache matcher ikke denne VoiceRig-version. Kør setup-windows.ps1 igen.",
-        }
+        return {"verified": False, "marker": str(marker), "detail": "Den verificerede modelcache matcher ikke denne VoiceRig-version. Kør setup-windows.ps1 igen."}
     return {
         "verified": True,
         "marker": str(marker),
@@ -122,7 +108,6 @@ def hardware_status() -> dict:
         import torch
     except Exception:
         return status
-
     status["cuda_available"] = bool(torch.cuda.is_available())
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
@@ -141,7 +126,6 @@ def hardware_status() -> dict:
 
 
 def reset_cuda_peaks() -> bool:
-    """Reset peak VRAM counters in the VoiceRig process that owns Chatterbox."""
     try:
         import torch
     except Exception:
@@ -156,14 +140,7 @@ def reset_cuda_peaks() -> bool:
 
 
 def cuda_memory_stats() -> dict:
-    """Report current/peak CUDA memory for physical 12 GB acceptance evidence."""
-    empty = {
-        "available": False,
-        "allocated_gb": None,
-        "reserved_gb": None,
-        "peak_allocated_gb": None,
-        "peak_reserved_gb": None,
-    }
+    empty = {"available": False, "allocated_gb": None, "reserved_gb": None, "peak_allocated_gb": None, "peak_reserved_gb": None}
     try:
         import torch
     except Exception:
@@ -184,41 +161,27 @@ def cuda_memory_stats() -> dict:
 
 
 def voice_build_readiness() -> dict:
-    """Return a human-readable preflight verdict without loading ML models.
-
-    Service health and ML readiness are deliberately separate: VoiceRig may be
-    up and able to serve/download existing packages even while CUDA, the
-    isolated diarization environment, or the preloaded model cache needs setup.
-    """
     hw = hardware_status()
     models = model_warmup_status()
     blockers: list[str] = []
     warnings: list[str] = []
-
     if hw.get("configuration_error"):
         blockers.append(str(hw["configuration_error"]))
     elif hw.get("chatterbox_device") != "cuda":
         blockers.append("Chatterbox er ikke klar på CUDA.")
-
     total = hw.get("vram_total_gb")
     if isinstance(total, (int, float)):
         if total < _TARGET_VRAM_GB:
-            blockers.append(
-                f"GPU'en har {total:.1f} GB VRAM; VoiceRig v1 målretter 12 GB-klassen (>= {_TARGET_VRAM_GB:.0f} GiB registreret)."
-            )
+            blockers.append(f"GPU'en har {total:.1f} GB VRAM; VoiceRig v1 målretter 12 GB-klassen (>= {_TARGET_VRAM_GB:.0f} GiB registreret).")
         free = hw.get("vram_free_gb")
         if isinstance(free, (int, float)) and free < 6.0:
-            warnings.append(
-                f"Kun {free:.1f} GB VRAM er fri lige nu; luk andre GPU-tunge modeller før voice-build hvis CUDA løber tør."
-            )
+            warnings.append(f"Kun {free:.1f} GB VRAM er fri lige nu; luk andre GPU-tunge modeller før voice-build hvis CUDA løber tør.")
     elif hw.get("cuda_available"):
         warnings.append("CUDA er fundet, men VRAM-størrelsen kunne ikke aflæses.")
-
     if not hw.get("diarization_available"):
         blockers.append("Den separate CPU-runtime til speaker-analyse er ikke installeret.")
     if not models.get("verified"):
         blockers.append(str(models.get("detail") or "VoiceRig-modellerne er ikke verificeret."))
-
     return {
         "ready": not blockers,
         "profile": "single-nvidia-gpu-12gb-class",

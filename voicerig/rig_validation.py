@@ -13,6 +13,7 @@ import httpx
 
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, create_voice
 from voicerig.engines.package_runtime import synthesize
+from voicerig.media.audio import validate_wav
 from voicerig.modelrig.client import install_local
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import voice_build_readiness
@@ -205,8 +206,12 @@ def run_end_to_end(
             speech,
         )
         synth_seconds = round(time.perf_counter() - synth_started, 2)
-        if not speech.is_file() or speech.stat().st_size <= 44:
-            raise RuntimeError("Testsyntesen producerede ikke en gyldig WAV-fil.")
+        speech_audio = validate_wav(
+            speech,
+            min_duration_s=0.5,
+            max_duration_s=90.0,
+            require_audible=True,
+        )
     except Exception as exc:
         return {
             "ok": False,
@@ -254,6 +259,7 @@ def run_end_to_end(
         },
         "gpu": _cuda_peaks(),
         "synthesis": synth_meta,
+        "synthesis_audio": speech_audio,
         "install": install,
         "modelrig": modelrig,
         "blockers": blockers,

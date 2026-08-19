@@ -13,12 +13,20 @@ from voicerig.model_contract import (
     CHATTERBOX_ENGINE,
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
+    DIARIZATION_TORCH_VERSION,
+    DIARIZATION_TORCHAUDIO_VERSION,
+    DIARIZATION_TORCHCODEC_VERSION,
     MODEL_READINESS_SCHEMA,
     PYANNOTE_MODEL_ID,
     PYANNOTE_PACKAGE_VERSION,
 )
 
 _READY_MARKER = "VOICERIG_DIARIZATION_READY="
+
+
+def _version_matches(actual, expected: str) -> bool:
+    value = str(actual or "")
+    return value == expected or value.startswith(expected + "+")
 
 
 def warm_chatterbox() -> dict:
@@ -75,14 +83,20 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
         payload = json.loads(line[len(_READY_MARKER):])
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeError("pyannote-worker returnerede ugyldigt warmup-resultat.") from exc
-    if (
-        not payload.get("ok")
-        or payload.get("model") != PYANNOTE_MODEL_ID
-        or payload.get("package_version") != PYANNOTE_PACKAGE_VERSION
-    ):
+
+    expected = (
+        payload.get("ok") is True
+        and payload.get("model") == PYANNOTE_MODEL_ID
+        and payload.get("package_version") == PYANNOTE_PACKAGE_VERSION
+        and _version_matches(payload.get("torch_version"), DIARIZATION_TORCH_VERSION)
+        and _version_matches(payload.get("torchaudio_version"), DIARIZATION_TORCHAUDIO_VERSION)
+        and payload.get("torchcodec_version") == DIARIZATION_TORCHCODEC_VERSION
+        and payload.get("cuda_available") is False
+    )
+    if not expected:
         raise RuntimeError(
-            "pyannote-worker rapporterede en uventet model- eller package-version. "
-            "Kør setup-windows.ps1 igen."
+            "pyannote-worker rapporterede en uventet CPU-runtime. "
+            "Kør setup-windows.ps1 igen, så den verificerede pyannote/torch-stack gendannes."
         )
     return payload
 
@@ -100,6 +114,9 @@ def _write_readiness_marker(report: dict) -> Path:
         "diarization": {
             "package_version": PYANNOTE_PACKAGE_VERSION,
             "model": PYANNOTE_MODEL_ID,
+            "torch_version": DIARIZATION_TORCH_VERSION,
+            "torchaudio_version": DIARIZATION_TORCHAUDIO_VERSION,
+            "torchcodec_version": DIARIZATION_TORCHCODEC_VERSION,
         },
         "warmup": report,
     }

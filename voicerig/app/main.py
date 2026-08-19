@@ -7,7 +7,11 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
-from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, create_voice
+from voicerig.app.pipeline import (
+    SUPPORTED_EXTENSIONS,
+    SpeakerSelectionRequired,
+    create_voice,
+)
 from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
 from voicerig.engines.package_runtime import status as tts_runtime_status
@@ -41,7 +45,6 @@ def health() -> dict:
 
 @app.get("/api/readiness")
 def readiness() -> dict:
-    """Cheap preflight for the physical rig; does not load Chatterbox/pyannote."""
     return voice_build_readiness()
 
 
@@ -50,10 +53,13 @@ def build_voice(
     name: str = Form(...),
     language: str = Form("da"),
     install_in_modelrig: bool = Form(True),
+    speaker_choice: int | None = Form(None),
     files: list[UploadFile] = File(...),
 ) -> dict:
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="Maksimalt 10 filer pr. stemme.")
+    if speaker_choice is not None and not 1 <= speaker_choice <= 4:
+        raise HTTPException(status_code=400, detail="Ugyldigt stemmevalg.")
     limit = max_upload_mb() * 1024 * 1024
     out_dir = data_dir() / "voices"
     if not _BUILD_LOCK.acquire(blocking=False):
@@ -80,7 +86,22 @@ def build_voice(
                 sources.append(target)
 
             try:
-                result = create_voice(name, sources, out_dir, language=language)
+                result = create_voice(
+                    name,
+                    sources,
+                    out_dir,
+                    language=language,
+                    speaker_choice=speaker_choice,
+                )
+            except SpeakerSelectionRequired as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "speaker_selection_required",
+                        "message": str(exc),
+                        "speakers": exc.choices,
+                    },
+                ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             except RuntimeError as exc:

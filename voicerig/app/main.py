@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 from pathlib import Path
@@ -7,17 +8,14 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
-from voicerig.app.pipeline import (
-    SUPPORTED_EXTENSIONS,
-    SpeakerSelectionRequired,
-    create_voice,
-)
+from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired, create_voice
 from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
 from voicerig.engines.package_runtime import status as tts_runtime_status
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats, reset_cuda_peaks, voice_build_readiness
+from voicerig.source_control import source_status
 
 app = FastAPI(title="VoiceRig", version="0.1.0")
 app.include_router(tts_router)
@@ -37,6 +35,8 @@ def health() -> dict:
         "ok": True,
         "service": "voicerig",
         "version": "0.1.0",
+        "pid": os.getpid(),
+        "source": source_status(),
         "hardware": readiness["hardware"],
         "voice_build_ready": readiness["ready"],
         "tts": tts_runtime_status(),
@@ -45,7 +45,10 @@ def health() -> dict:
 
 @app.get("/api/readiness")
 def readiness() -> dict:
-    return voice_build_readiness()
+    result = voice_build_readiness()
+    result["source"] = source_status()
+    result["pid"] = os.getpid()
+    return result
 
 
 @app.post("/api/voices")
@@ -70,9 +73,6 @@ def build_voice(
     if not _BUILD_LOCK.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="VoiceRig arbejder allerede på en stemme. Prøv igen bagefter.")
 
-    # Physical acceptance must measure the actual long-lived VoiceRig process,
-    # not a second validator process. Reset immediately before this build; the
-    # subsequent TTS response reports the same process' cumulative peak.
     reset_cuda_peaks()
     try:
         with tempfile.TemporaryDirectory(prefix="voicerig-upload-") as tmp:
@@ -87,30 +87,16 @@ def build_voice(
                     while chunk := upload.file.read(1024 * 1024):
                         total_size += len(chunk)
                         if total_size > limit:
-                            raise HTTPException(
-                                status_code=413,
-                                detail=f"De samlede uploads overstiger grænsen på {max_upload_mb()} MB.",
-                            )
+                            raise HTTPException(status_code=413, detail=f"De samlede uploads overstiger grænsen på {max_upload_mb()} MB.")
                         f.write(chunk)
                 sources.append(target)
 
             try:
-                result = create_voice(
-                    name,
-                    sources,
-                    out_dir,
-                    language=language,
-                    speaker_choice=speaker_choice,
-                    speaker_anchor=speaker_anchor,
-                )
+                result = create_voice(name, sources, out_dir, language=language, speaker_choice=speaker_choice, speaker_anchor=speaker_anchor)
             except SpeakerSelectionRequired as exc:
                 raise HTTPException(
                     status_code=409,
-                    detail={
-                        "code": "speaker_selection_required",
-                        "message": str(exc),
-                        "speakers": exc.choices,
-                    },
+                    detail={"code": "speaker_selection_required", "message": str(exc), "speakers": exc.choices},
                 ) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -139,6 +125,8 @@ def build_voice(
         "modelrig_detail": install_detail,
         "diarization_used": result.diarization_used,
         "gpu": cuda_memory_stats(),
+        "source": source_status(),
+        "pid": os.getpid(),
     }
 
 

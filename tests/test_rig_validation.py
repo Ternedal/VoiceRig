@@ -29,7 +29,7 @@ def test_preflight_collects_runtime_blockers(monkeypatch):
     assert report["ok"] is False
     assert "CUDA mangler" in report["blockers"]
     assert "FFmpeg blev ikke fundet på PATH." in report["blockers"]
-    assert "chatterbox-tts er ikke installeret i hovedmiljøet." in report["blockers"]
+    assert "Chatterbox V3 er ikke installeret i hovedmiljøet." in report["blockers"]
     assert any("pyannote CPU-runtime" in item for item in report["blockers"])
     assert report["warnings"] == ["lav fri VRAM"]
 
@@ -60,33 +60,93 @@ def test_preflight_passes_when_all_dependencies_are_ready(monkeypatch):
     assert report["checks"]["diarization"] is True
 
 
-def test_modelrig_probe_reports_tts(monkeypatch):
+def test_modelrig_probe_uses_authenticated_backend_and_verifies_voicerig_package(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "checks": {
+                    "tts": {
+                        "ok": True,
+                        "provider": "voicerig",
+                        "package": "anders.mrvoice",
+                        "device": "cuda",
+                    }
+                }
+            }
+
+    def fake_get(url, headers, timeout):
+        captured.update(url=url, headers=headers, timeout=timeout)
+        return Response()
+
+    monkeypatch.setattr(rv.httpx, "get", fake_get)
+    report = rv._probe_modelrig(
+        "http://127.0.0.1:8080",
+        "secret-token",
+        expected_package="anders.mrvoice",
+    )
+
+    assert captured["url"] == "http://127.0.0.1:8080/api/v1/health/full"
+    assert captured["headers"]["Authorization"] == "Bearer secret-token"
+    assert report["reachable"] is True
+    assert report["authenticated"] is True
+    assert report["tts"] is True
+    assert report["provider"] == "voicerig"
+    assert report["package_matches"] is True
+
+
+def test_modelrig_probe_reports_missing_token_as_auth_failure(monkeypatch):
+    class Response:
+        status_code = 401
+
+    monkeypatch.setattr(rv.httpx, "get", lambda url, headers, timeout: Response())
+
+    report = rv._probe_modelrig("http://127.0.0.1:8080", None)
+
+    assert report["reachable"] is True
+    assert report["authenticated"] is False
+    assert report["tts"] is False
+    assert "MODELRIG_TOKEN" in report["detail"]
+
+
+def test_modelrig_probe_fails_closed_when_backend_is_offline(monkeypatch):
+    def fail(url, headers, timeout):
+        raise rv.httpx.ConnectError("offline")
+
+    monkeypatch.setattr(rv.httpx, "get", fail)
+
+    report = rv._probe_modelrig("http://127.0.0.1:8080", "token")
+
+    assert report["reachable"] is False
+    assert report["tts"] is False
+
+
+def test_voice_service_status_requires_ready_body(monkeypatch):
     class Response:
         def raise_for_status(self):
             return None
 
         def json(self):
-            return {"tts": True, "cuda": True}
+            return {"ready": True, "hardware": {"gpu": "RTX 3060"}}
 
-    monkeypatch.setattr(rv.httpx, "get", lambda _url, timeout: Response())
-
-    report = rv._probe_modelrig("http://127.0.0.1:8099")
+    monkeypatch.setattr(rv.httpx, "get", lambda url, timeout: Response())
+    report = rv._voice_service_status("http://127.0.0.1:8765")
 
     assert report["reachable"] is True
-    assert report["tts"] is True
-    assert report["capabilities"]["cuda"] is True
+    assert report["ready"] is True
+    assert report["url"].endswith("/api/readiness")
 
 
-def test_modelrig_probe_fails_closed(monkeypatch):
-    def fail(_url, timeout):
-        raise rv.httpx.ConnectError("offline")
-
-    monkeypatch.setattr(rv.httpx, "get", fail)
-
-    report = rv._probe_modelrig("http://127.0.0.1:8099")
-
-    assert report["reachable"] is False
-    assert report["tts"] is False
+def test_header_float_rejects_nonfinite_values():
+    assert rv._header_float({"x": "12.5"}, "x") == 12.5
+    assert rv._header_float({"x": "nan"}, "x") is None
+    assert rv._header_float({}, "x") is None
 
 
 def test_speaker_similarity_reports_cosine_without_inventing_threshold(monkeypatch, tmp_path):

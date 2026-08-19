@@ -11,7 +11,8 @@ VoiceRig laver en portabel ModelRig-stemmeprofil ud fra almindelige lyd- og vide
 - Kan samle flere korte, rene taleturns fra samme person til én 6–10 sekunders reference uden at kopiere lyd fra hullerne mellem dem.
 - Bruger lokal `pyannote/speaker-diarization-community-1` til flere talere.
 - Matcher samme speaker på tværs af flere klip via varighedsvægtede speaker-centroids.
-- Vælger kun en speaker automatisk ved tydelig dominans; næsten lige tydelige personer giver en brugerfejl frem for et gæt.
+- Vælger automatisk ved tydelig dominans. Ved reel tvivl vises op til fire afspillelige stemmeprøver, og brugeren klikker **Brug denne stemme**.
+- Det manuelle valg bindes til et konkret taleturn-anker (inputfil + tidspunkt), så genanalysen genfinder samme person i stedet for at stole på et ustabilt “Stemme 1/2”-rangnummer.
 - Fejler lukket hvis speaker-analysen ikke kan køre. Undiarized fallback findes kun som eksplicit udvikler-escape hatch.
 - Bygger Chatterbox Multilingual V3 voice conditioning.
 - Genererer dansk preview.
@@ -77,6 +78,17 @@ kendt single-speaker-materiale. Normal produktadfærd er fail-closed.
 
 UI åbner på `http://127.0.0.1:8765`. Knappen **Opret stemme** aktiveres først,
 når den lokale hardware-readiness er grøn.
+
+Normalflowet kræver kun filer + navn. Hvis flere personer fylder omtrent lige
+meget, stopper VoiceRig før Chatterbox bliver loadet og viser korte lydprøver:
+
+```text
+Stemme 1   [▶]   [Brug denne stemme]
+Stemme 2   [▶]   [Brug denne stemme]
+```
+
+Efter valget genbruges de samme filer automatisk, og resten af voice-buildet
+fortsætter uden yderligere indstillinger.
 
 ## ModelRig
 

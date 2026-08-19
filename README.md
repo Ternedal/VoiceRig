@@ -27,7 +27,7 @@ Windows-runtime er bevidst delt:
 - `.venv`: VoiceRig + verificeret Chatterbox Multilingual V3 source-revision + Torch/Torchaudio 2.6.0 CUDA 12.6.
 - `.venv-diarization`: pyannote.audio 4.0.7 + Torch 2.8.0 + Torchaudio 2.8.0 + TorchCodec 0.7.0, CPU-only.
 
-Speaker-analyse bruger dermed ikke GPU-VRAM, som reserveres til Chatterbox.
+Speaker-analyse bruger dermed ikke GPU-VRAM, som reserveres til Chatterbox. VoiceRig normaliserer selv input til mono PCM16 WAV og sender waveformen **in-memory** til pyannote. Det betyder, at TorchCodec er installeret som pyannote-dependency, men dens Windows file-decoder/FFmpeg-DLL discovery ikke ligger på den kritiske diarization-sti.
 
 ## Krav
 
@@ -51,7 +51,7 @@ Speaker-analyse bruger dermed ikke GPU-VRAM, som reserveres til Chatterbox.
 3. installerer den eksakt pinnede CPU-only pyannote-stack,
 4. opretter `.env` fra `.env.example` hvis nødvendigt,
 5. downloader og **loader begge modeller som warmup**,
-6. verificerer dansk V3, CPU-only diarization og modelversionerne,
+6. verificerer dansk V3, CPU-only diarization, runtime-versionerne og in-memory PCM-inputkontrakten,
 7. skriver `voicerig-data/model-readiness.json`,
 8. sætter per-user autostart.
 

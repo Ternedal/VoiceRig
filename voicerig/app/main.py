@@ -59,6 +59,8 @@ def build_voice(
 ) -> dict:
     if len(files) > 10:
         raise HTTPException(status_code=400, detail="Maksimalt 10 filer pr. stemme.")
+    if speaker_choice is not None and speaker_anchor is not None:
+        raise HTTPException(status_code=400, detail="Angiv kun ét stemmevalg.")
     if speaker_choice is not None and not 1 <= speaker_choice <= 4:
         raise HTTPException(status_code=400, detail="Ugyldigt stemmevalg.")
     if speaker_anchor is not None and (len(speaker_anchor) > 64 or ":" not in speaker_anchor):

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from voicerig.analysis.diarization import _worker_python
+from voicerig.config import load_local_env
 from voicerig.engines.chatterbox import _shared_model
 
 _READY_MARKER = "VOICERIG_DIARIZATION_READY="
@@ -70,6 +71,10 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
 
 
 def warm_models() -> dict:
+    # setup-windows.ps1 runs this module directly. Reload the repo-local .env so
+    # HF_TOKEN and privacy/configuration defaults are guaranteed to be present
+    # before either model loader starts. Existing OS/session vars still win.
+    load_local_env()
     chatterbox = warm_chatterbox()
     diarization = warm_diarization()
     return {"ok": True, "chatterbox": chatterbox, "diarization": diarization}

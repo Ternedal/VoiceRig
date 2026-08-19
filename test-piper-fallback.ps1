@@ -1,12 +1,18 @@
 param(
     [string]$VoiceRigUrl = "http://127.0.0.1:8765",
     [string]$ModelRigUrl = "http://127.0.0.1:8080",
+    [string]$ModelRigWorkerUrl = "http://127.0.0.1:8099",
     [string]$ModelRigToken = $env:MODELRIG_TOKEN,
     [string]$Report = (Join-Path $PSScriptRoot "piper-fallback-report.json")
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+$WorkerUri = [Uri]$ModelRigWorkerUrl
+if ($WorkerUri.Scheme -ne "http" -or $WorkerUri.Host -notin @("127.0.0.1", "localhost", "::1")) {
+    throw "Piper fallback-testen må kun kalde ModelRig-worker på loopback."
+}
 
 function Get-VoiceRigHealth {
     try {
@@ -71,6 +77,51 @@ function Wait-ModelRigProvider([string]$Provider) {
     throw "ModelRig skiftede ikke til provider '$Provider'. Seneste provider: '$Actual'."
 }
 
+function Invoke-PiperSynthesis {
+    $OutDir = Join-Path $PSScriptRoot "validation-output"
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+    $Output = Join-Path $OutDir "piper-fallback.wav"
+    Remove-Item -LiteralPath $Output -Force -ErrorAction SilentlyContinue
+
+    $Body = @{
+        text = "Hej. Dette er ModelRigs automatiske Piper fallback-test."
+        out_path = $Output
+    } | ConvertTo-Json
+
+    $Result = Invoke-RestMethod `
+        -Uri ($ModelRigWorkerUrl.TrimEnd('/') + "/voice/tts/synthesize") `
+        -Method Post `
+        -ContentType "application/json" `
+        -Body $Body `
+        -TimeoutSec 120
+
+    if (-not $Result -or $Result.provider -ne "piper") {
+        throw "ModelRig-worker syntetiserede ikke fallback-testen med Piper."
+    }
+    if (-not (Test-Path -LiteralPath $Output)) {
+        throw "Piper rapporterede succes, men fallback-WAV blev ikke skrevet."
+    }
+    $Info = Get-Item -LiteralPath $Output
+    if ($Info.Length -le 44) {
+        throw "Piper fallback-WAV er tom eller for kort til at være gyldig."
+    }
+    $Bytes = [System.IO.File]::ReadAllBytes($Output)
+    $Magic = [System.Text.Encoding]::ASCII.GetString($Bytes, 0, 4)
+    if ($Magic -ne "RIFF") {
+        throw "Piper fallback-output er ikke en RIFF/WAV-fil."
+    }
+
+    return [ordered]@{
+        provider = $Result.provider
+        voice = $Result.voice
+        sample_rate = $Result.sample_rate
+        duration = $Result.duration
+        output = $Output
+        bytes = $Info.Length
+        riff = $true
+    }
+}
+
 $CheckoutRevision = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $CheckoutRevision) {
     throw "Kunne ikke aflæse VoiceRig Git HEAD."
@@ -92,6 +143,7 @@ $VoiceRigExe = (Resolve-Path ".venv\Scripts\voicerig.exe").Path
 $StoppedPid = [int]$Initial.pid
 $Restarted = $false
 $Fallback = $null
+$PiperSynthesis = $null
 $Restored = $null
 $RestartedHealth = $null
 $Failure = $null
@@ -102,7 +154,8 @@ try {
     Wait-VoiceRigDown
 
     $Fallback = Wait-ModelRigProvider "piper"
-    Write-Host "ModelRig fallback: PASS (provider=piper)"
+    $PiperSynthesis = Invoke-PiperSynthesis
+    Write-Host "ModelRig fallback: PASS (provider=piper + rigtig WAV)"
 } catch {
     $Failure = $_.Exception.Message
 } finally {
@@ -122,11 +175,12 @@ try {
 }
 
 $Result = [ordered]@{
-    ok = (-not $Failure -and $Fallback -and $Fallback.ok -eq $true -and $Fallback.provider -eq "piper" -and $Restarted -and $Restored -and $Restored.ok -eq $true -and $Restored.provider -eq "voicerig")
+    ok = (-not $Failure -and $Fallback -and $Fallback.ok -eq $true -and $Fallback.provider -eq "piper" -and $PiperSynthesis -and $PiperSynthesis.provider -eq "piper" -and $PiperSynthesis.riff -eq $true -and $Restarted -and $Restored -and $Restored.ok -eq $true -and $Restored.provider -eq "voicerig")
     checkout_revision = $CheckoutRevision
     stopped_voicerig_pid = $StoppedPid
     before = $Before
     fallback = $Fallback
+    piper_synthesis = $PiperSynthesis
     restarted = $Restarted
     restarted_service_pid = if ($RestartedHealth) { $RestartedHealth.pid } else { $null }
     restarted_service_revision = if ($RestartedHealth -and $RestartedHealth.source) { $RestartedHealth.source.revision } else { $null }
@@ -144,5 +198,6 @@ if (-not $Result.ok) {
 }
 
 Write-Host "Piper fallback acceptance: PASS"
+Write-Host "Piper WAV: $($PiperSynthesis.output)"
 Write-Host "Report: $Report"
 exit 0

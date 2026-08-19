@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipModelWarmup
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -5,7 +9,12 @@ if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     throw "FFmpeg blev ikke fundet på PATH. Installér FFmpeg først."
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    throw "Git blev ikke fundet på PATH. Chatterbox har en Git-baseret dependency og kræver Git under installationen."
+    throw "Git blev ikke fundet på PATH. VoiceRig installerer den verificerede Chatterbox V3-kilde fra GitHub og kræver Git."
+}
+
+if (-not (Test-Path ".env") -and (Test-Path ".env.example")) {
+    Copy-Item ".env.example" ".env"
+    Write-Host "Oprettede .env fra .env.example. HF_TOKEN kan sættes her ved første pyannote-download."
 }
 
 # Chatterbox is upstream-tested on Python 3.11, and pyannote also supports it.
@@ -33,10 +42,9 @@ function New-Venv([string]$Path) {
 }
 
 # ---------------------------------------------------------------------------
-# Main VoiceRig runtime: Chatterbox + explicit CUDA-enabled PyTorch 2.6.0.
-# Chatterbox 0.1.7 pins torch/torchaudio 2.6.0. Installing from the official
-# cu126 index first prevents pip on Windows from silently landing on CPU-only
-# torch, which has been a real upstream failure mode.
+# Main VoiceRig runtime: verified Chatterbox Multilingual V3 source revision +
+# explicit CUDA-enabled PyTorch 2.6.0. Installing the official cu126 wheels
+# first prevents pip on Windows from silently landing on CPU-only torch.
 # ---------------------------------------------------------------------------
 New-Venv ".venv"
 $MainPy = ".\.venv\Scripts\python.exe"
@@ -86,6 +94,20 @@ if (-not $DiarReady) {
 & $DiarPy -c "import pyannote.audio,torch; assert not torch.cuda.is_available(); print(f'pyannote CPU runtime OK | torch {torch.__version__}')"
 if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø er ikke funktionsdygtigt." }
 
+# Download and actually load both ML stacks now. This makes setup fail early
+# with an actionable error instead of turning the first 'Opret stemme' click
+# into an implicit model installation.
+if (-not $SkipModelWarmup) {
+    Write-Host ""
+    Write-Host "Henter og verificerer Chatterbox V3 + pyannote community-1..."
+    & $MainPy -m voicerig.model_warmup
+    if ($LASTEXITCODE -ne 0) {
+        throw "Model-warmup fejlede. Hvis pyannote mangler adgang: acceptér community-1-vilkårene, sæt HF_TOKEN i .env og kør setup-windows.ps1 igen."
+    }
+} else {
+    Write-Warning "Model-warmup er sprunget over. Første voice-build kan derfor skulle hente modeller."
+}
+
 & .\install-autostart.ps1
 
 function Test-VoiceRig {
@@ -101,7 +123,6 @@ if (-not (Test-VoiceRig)) {
 }
 
 Write-Host ""
-Write-Host "VoiceRig er installeret og sat til autostart for din Windows-bruger."
-Write-Host "GPU-plan: Chatterbox = CUDA i .venv; pyannote = CPU i .venv-diarization."
-Write-Host "Hvis community-1-modellen ikke er hentet endnu, sæt HF_TOKEN før første speaker-analyse."
+Write-Host "VoiceRig er installeret, modellerne er verificeret og autostart er sat for din Windows-bruger."
+Write-Host "GPU-plan: Chatterbox V3 = CUDA i .venv; pyannote = CPU i .venv-diarization."
 Write-Host "Åbn VoiceRig med: .\start-windows.ps1"

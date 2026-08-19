@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """CPU-only pyannote worker used from VoiceRig's separate diarization venv.
 
-Why a subprocess? Chatterbox 0.1.7 pins torch/torchaudio 2.6.0 while current
-pyannote.audio requires torch >=2.8. Keeping them in separate venvs avoids an
-unsatisfiable dependency graph and also keeps diarization off the 12 GB GPU.
+Why a subprocess? Chatterbox and current pyannote have incompatible torch
+requirements. Keeping them in separate venvs avoids an unsatisfiable dependency
+graph and also keeps diarization off the 12 GB GPU.
 
 The protocol is intentionally tiny: input paths are argv, one JSON payload is
-printed with a stable marker, diagnostics go to stderr.
+printed with a stable marker, diagnostics go to stderr. `--preload` downloads
+and verifies the community-1 pipeline without processing user audio.
 """
 from __future__ import annotations
 
@@ -16,6 +17,23 @@ import sys
 from pathlib import Path
 
 _MARKER = "VOICERIG_DIARIZATION_JSON="
+_READY_MARKER = "VOICERIG_DIARIZATION_READY="
+_MODEL_ID = "pyannote/speaker-diarization-community-1"
+
+# VoiceRig is local-first. pyannote telemetry does not contain audio, but it can
+# include model origin, file duration and speaker-count parameters. Disable it
+# unless the user explicitly opts in with PYANNOTE_METRICS_ENABLED=1.
+os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
+
+
+def _load_pipeline():
+    try:
+        from pyannote.audio import Pipeline
+    except Exception as exc:
+        raise RuntimeError(f"pyannote.audio unavailable: {exc}") from exc
+
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    return Pipeline.from_pretrained(_MODEL_ID, token=token)
 
 
 def _one(pipeline, path: str) -> dict:
@@ -52,24 +70,40 @@ def _one(pipeline, path: str) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("pyannote worker requires at least one WAV path", file=sys.stderr)
-        return 2
-    try:
-        from pyannote.audio import Pipeline
-    except Exception as exc:
-        print(f"pyannote.audio unavailable: {exc}", file=sys.stderr)
+    args = sys.argv[1:]
+    if not args:
+        print("pyannote worker requires WAV paths or --preload", file=sys.stderr)
         return 2
 
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
     try:
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-community-1",
-            token=token,
+        pipeline = _load_pipeline()
+    except Exception as exc:
+        print(f"speaker model load failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+
+    if args == ["--preload"]:
+        print(
+            _READY_MARKER
+            + json.dumps(
+                {
+                    "ok": True,
+                    "model": _MODEL_ID,
+                    "telemetry": os.getenv("PYANNOTE_METRICS_ENABLED", "0"),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         )
+        return 0
+
+    if any(arg.startswith("--") for arg in args):
+        print("unknown pyannote worker option", file=sys.stderr)
+        return 2
+
+    try:
         # Deliberately do not call .to(cuda): this worker owns the CPU-only
         # diarization environment and leaves GPU VRAM to Chatterbox/ModelRig.
-        payload = [_one(pipeline, path) for path in sys.argv[1:]]
+        payload = [_one(pipeline, path) for path in args]
     except Exception as exc:
         print(f"speaker analysis failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 3

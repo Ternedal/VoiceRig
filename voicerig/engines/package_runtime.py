@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 from voicerig.config import data_dir
-from voicerig.engines.chatterbox import _MODEL_RUN_LOCK, _shared_model
+from voicerig.engines.chatterbox import _MODEL_RUN_LOCK, _save_pcm16, _shared_model
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import chatterbox_device
 
@@ -124,7 +124,7 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
         except Exception as exc:
             raise RuntimeError("torchaudio mangler i VoiceRig-runtime.") from exc
         output.parent.mkdir(parents=True, exist_ok=True)
-        ta.save(str(output), wav, model.sr)
+        _save_pcm16(ta, output, wav, model.sr)
         frames = int(wav.shape[-1])
         duration = round(frames / int(model.sr), 3) if model.sr else 0.0
         return {

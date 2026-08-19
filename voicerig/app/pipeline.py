@@ -9,6 +9,7 @@ from voicerig.analysis.diarization import DiarizationUnavailable, diarize_many, 
 from voicerig.analysis.reference import select_reference
 from voicerig.config import allow_undiarized_fallback
 from voicerig.engines.chatterbox import ChatterboxEngine
+from voicerig.media.audio import validate_wav
 from voicerig.media.ffmpeg import cut_wav, extract_mono_wav, stitch_wav_segments
 from voicerig.profiles.package import build_package, slugify
 
@@ -72,12 +73,14 @@ def create_voice(name: str, sources: list[Path], output_dir: Path, language: str
             stitch_wav_segments(candidate.source, reference, list(candidate.parts))
         else:
             cut_wav(candidate.source, reference, candidate.start, candidate.duration)
+        validate_wav(reference, min_duration_s=5.4, max_duration_s=11.5, require_audible=True)
 
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
         engine.build_conditioning(reference, conditioning)
         engine.preview(reference, preview)
+        validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
         package = output_dir / f"{slugify(name)}.mrvoice"
         build_package(name, language, reference, conditioning, preview, package)

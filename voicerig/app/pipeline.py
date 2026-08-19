@@ -5,7 +5,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from voicerig.analysis.diarization import DiarizationUnavailable, diarize, primary_speaker_segments
+from voicerig.analysis.diarization import DiarizationUnavailable, diarize_many, primary_speaker_segments
 from voicerig.analysis.reference import select_reference
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.media.ffmpeg import cut_wav, extract_mono_wav
@@ -46,7 +46,10 @@ def create_voice(name: str, sources: list[Path], output_dir: Path, language: str
         diarizations = {}
         used = False
         try:
-            results = [diarize(wav) for wav in wavs]
+            # One subprocess/model load for all uploaded clips. The pyannote
+            # environment is CPU-only and intentionally separate from the
+            # CUDA/Chatterbox environment.
+            results = diarize_many(wavs)
             diarizations = primary_speaker_segments(results)
             used = bool(diarizations)
         except DiarizationUnavailable:

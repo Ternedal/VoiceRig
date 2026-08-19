@@ -5,6 +5,7 @@ from voicerig.app.pipeline import SpeakerSelectionRequired
 
 
 def test_ambiguous_speaker_response_is_structured_409(monkeypatch):
+    monkeypatch.setenv("VOICERIG_ALLOW_LAN", "1")
     choices = [
         {
             "choice": 1,
@@ -42,7 +43,8 @@ def test_ambiguous_speaker_response_is_structured_409(monkeypatch):
     assert "Vælg" in detail["message"]
 
 
-def test_speaker_choice_is_bounded_before_processing():
+def test_speaker_choice_is_bounded_before_processing(monkeypatch):
+    monkeypatch.setenv("VOICERIG_ALLOW_LAN", "1")
     client = TestClient(main.app)
     response = client.post(
         "/api/voices",

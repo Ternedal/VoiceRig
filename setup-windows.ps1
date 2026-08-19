@@ -71,9 +71,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
-# Diarization runtime: current pyannote requires torch >=2.8, which conflicts
-# with Chatterbox's exact torch 2.6 pin. Keep it in a separate CPU-only venv.
-# This also guarantees that speaker analysis cannot consume GPU VRAM.
+# Diarization runtime: verified pyannote.audio 4.0.7 needs a newer torch than
+# Chatterbox's exact torch 2.6 pin. Keep it in a separate CPU-only venv. This
+# also guarantees that speaker analysis cannot consume GPU VRAM.
 # ---------------------------------------------------------------------------
 New-Venv ".venv-diarization"
 $DiarPy = ".\.venv-diarization\Scripts\python.exe"
@@ -81,18 +81,18 @@ $DiarPy = ".\.venv-diarization\Scripts\python.exe"
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i diarization-miljøet." }
 
 $DiarReady = $false
-& $DiarPy -c "import pyannote.audio,torch,sys; sys.exit(0 if not torch.cuda.is_available() else 1)" 2>$null
+& $DiarPy -c "import pyannote.audio,torch,sys; sys.exit(0 if pyannote.audio.__version__ == '4.0.7' and not torch.cuda.is_available() else 1)" 2>$null
 if ($LASTEXITCODE -eq 0) { $DiarReady = $true }
 if (-not $DiarReady) {
-    Write-Host "Installerer separat CPU-runtime til speaker-analyse..."
+    Write-Host "Installerer verificeret CPU-runtime til speaker-analyse..."
     & $DiarPy -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cpu
     if ($LASTEXITCODE -ne 0) { throw "CPU-PyTorch til diarization kunne ikke installeres." }
-    & $DiarPy -m pip install "pyannote.audio>=4.0.7,<5"
-    if ($LASTEXITCODE -ne 0) { throw "pyannote.audio kunne ikke installeres." }
+    & $DiarPy -m pip install --upgrade --force-reinstall "pyannote.audio==4.0.7"
+    if ($LASTEXITCODE -ne 0) { throw "pyannote.audio 4.0.7 kunne ikke installeres." }
 }
 
-& $DiarPy -c "import pyannote.audio,torch; assert not torch.cuda.is_available(); print(f'pyannote CPU runtime OK | torch {torch.__version__}')"
-if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø er ikke funktionsdygtigt." }
+& $DiarPy -c "import pyannote.audio,torch; assert pyannote.audio.__version__ == '4.0.7'; assert not torch.cuda.is_available(); print(f'pyannote {pyannote.audio.__version__} CPU runtime OK | torch {torch.__version__}')"
+if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø er ikke funktionsdygtigt eller har forkert version." }
 
 # Download and actually load both ML stacks now. This makes setup fail early
 # with an actionable error instead of turning the first 'Opret stemme' click
@@ -124,5 +124,5 @@ if (-not (Test-VoiceRig)) {
 
 Write-Host ""
 Write-Host "VoiceRig er installeret, modellerne er verificeret og autostart er sat for din Windows-bruger."
-Write-Host "GPU-plan: Chatterbox V3 = CUDA i .venv; pyannote = CPU i .venv-diarization."
+Write-Host "GPU-plan: Chatterbox V3 = CUDA i .venv; pyannote 4.0.7 = CPU i .venv-diarization."
 Write-Host "Åbn VoiceRig med: .\start-windows.ps1"

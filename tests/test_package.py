@@ -1,0 +1,55 @@
+from pathlib import Path
+import zipfile
+
+import pytest
+
+from voicerig.profiles.package import build_package, validate_package
+
+
+def test_build_and_validate_package(tmp_path: Path):
+    ref = tmp_path / "reference.wav"; ref.write_bytes(b"RIFF-reference")
+    cond = tmp_path / "conditioning.pt"; cond.write_bytes(b"conditioning")
+    preview = tmp_path / "preview.wav"; preview.write_bytes(b"RIFF-preview")
+    package = tmp_path / "anders.mrvoice"
+
+    build_package("Anders", "da", ref, cond, preview, package)
+    manifest = validate_package(package)
+
+    assert manifest["format"] == "modelrig-voice"
+    assert manifest["format_version"] == 1
+    assert manifest["name"] == "Anders"
+    assert manifest["language"] == "da"
+    assert manifest["engine"]["model"] == "v3"
+
+
+def test_rejects_path_traversal(tmp_path: Path):
+    package = tmp_path / "evil.mrvoice"
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("../evil", b"x")
+    with pytest.raises(ValueError, match="Ugyldig sti"):
+        validate_package(package)
+
+
+def test_rejects_incomplete_checksums(tmp_path: Path):
+    package = tmp_path / "bad.mrvoice"
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("manifest.json", '{"format":"modelrig-voice","format_version":1,"files":{"reference":"reference.wav","conditioning":"conditioning.pt","preview":"preview.wav"}}')
+        zf.writestr("checksums.json", "{}")
+        zf.writestr("reference.wav", b"a")
+        zf.writestr("conditioning.pt", b"b")
+        zf.writestr("preview.wav", b"c")
+    with pytest.raises(ValueError, match="Checksums"):
+        validate_package(package)
+
+
+def test_rejects_unknown_payload(tmp_path: Path):
+    package = tmp_path / "bad.mrvoice"
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("checksums.json", "{}")
+        zf.writestr("reference.wav", b"a")
+        zf.writestr("conditioning.pt", b"b")
+        zf.writestr("preview.wav", b"c")
+        zf.writestr("run.exe", b"nope")
+    with pytest.raises(ValueError, match="Ukendt fil"):
+        validate_package(package)

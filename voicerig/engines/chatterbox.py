@@ -38,6 +38,18 @@ def _shared_model():
         return _MODELS[device]
 
 
+def _save_pcm16(ta, path: Path, wav, sample_rate: int) -> None:
+    """Keep .mrvoice/runtime WAVs deterministic across torchaudio backends."""
+    ta.save(
+        str(path),
+        wav,
+        sample_rate,
+        format="wav",
+        encoding="PCM_S",
+        bits_per_sample=16,
+    )
+
+
 class ChatterboxEngine:
     def __init__(self, language: str = "da") -> None:
         self.language = language
@@ -69,5 +81,5 @@ class ChatterboxEngine:
                 temperature=0.8,
             )
             output.parent.mkdir(parents=True, exist_ok=True)
-            ta.save(str(output), wav, model.sr)
+            _save_pcm16(ta, output, wav, model.sr)
         return output

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from voicerig.analysis.diarization import diarize_many
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, create_voice
 from voicerig.engines.package_runtime import synthesize
 from voicerig.media.audio import validate_wav
@@ -146,6 +148,55 @@ def _probe_modelrig(base_url: str) -> dict:
         }
 
 
+def _dominant_embedding(result) -> tuple[float, ...] | None:
+    candidates = [speaker for speaker in result.speakers if speaker.embedding is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda speaker: speaker.duration).embedding
+
+
+def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float | None:
+    if not a or len(a) != len(b):
+        return None
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return None
+    return dot / (na * nb)
+
+
+def _measure_speaker_similarity(reference: Path, synthesis: Path) -> dict:
+    """Informational metric only until calibrated on real Danish rig samples."""
+    try:
+        results = diarize_many([reference, synthesis])
+        if len(results) != 2:
+            raise RuntimeError("speaker-målingen returnerede forkert antal resultater")
+        ref_embedding = _dominant_embedding(results[0])
+        synth_embedding = _dominant_embedding(results[1])
+        if ref_embedding is None or synth_embedding is None:
+            return {
+                "available": False,
+                "cosine": None,
+                "calibrated_threshold": None,
+                "detail": "pyannote returnerede ikke speaker embeddings for begge filer",
+            }
+        similarity = _cosine(ref_embedding, synth_embedding)
+        return {
+            "available": similarity is not None,
+            "cosine": round(similarity, 4) if similarity is not None else None,
+            "calibrated_threshold": None,
+            "detail": None if similarity is not None else "embedding-dimensioner kunne ikke sammenlignes",
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "cosine": None,
+            "calibrated_threshold": None,
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def run_end_to_end(
     name: str,
     sources: list[Path],
@@ -224,12 +275,17 @@ def run_end_to_end(
             "gpu": _cuda_peaks(),
         }
 
+    speaker_similarity = _measure_speaker_similarity(build.reference, speech)
     modelrig = _probe_modelrig(modelrig_url)
     blockers: list[str] = []
     warnings: list[str] = []
     if not build.diarization_used:
         blockers.append(
             "Speaker-diarization blev ikke brugt. Kontrollér HF_TOKEN, accepter community-1-vilkårene og modelcachen."
+        )
+    if not speaker_similarity["available"]:
+        warnings.append(
+            "Speaker-similarity kunne ikke måles automatisk; manuel lyttekontrol er stadig påkrævet."
         )
     if require_modelrig and not modelrig["reachable"]:
         blockers.append("ModelRig-worker kunne ikke kontaktes på loopback under sluttesten.")
@@ -260,6 +316,7 @@ def run_end_to_end(
         "gpu": _cuda_peaks(),
         "synthesis": synth_meta,
         "synthesis_audio": speech_audio,
+        "speaker_similarity": speaker_similarity,
         "install": install,
         "modelrig": modelrig,
         "blockers": blockers,
@@ -282,6 +339,9 @@ def _print_summary(report: dict) -> None:
     if voice:
         print(f"Voice: {voice['name']} | {voice['package']}")
         print(f"Validation WAV: {voice['validation_wav']}")
+    similarity = report.get("speaker_similarity") or {}
+    if similarity.get("cosine") is not None:
+        print(f"Speaker similarity cosine: {similarity['cosine']} (informational; not calibrated)")
     gpu = report.get("gpu") or {}
     if gpu.get("peak_allocated_gb") is not None:
         print(

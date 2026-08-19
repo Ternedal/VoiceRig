@@ -6,13 +6,13 @@ Audio / Video
     v
 FFmpeg decode -> mono PCM WAV
     |
-    +-> pyannote diarization (when available)
+    +-> .venv-diarization / pyannote (CPU subprocess, one model load for all clips)
     |
     v
 Reference selection
     |
     v
-Chatterbox Multilingual V3
+.venv / Chatterbox Multilingual V3 (CUDA)
     |                |
     |                +-> preview.wav
     +-> conditioning.pt
@@ -21,20 +21,35 @@ Chatterbox Multilingual V3
 .mrvoice package
     |
     +-> download
-    +-> ModelRig backend /api/v1/voices/import
+    +-> ~/.kaliv/voices/ (same-host ModelRig)
+    +-> optional remote ModelRig API later
 ```
 
 The UI intentionally exposes no model knobs in the normal flow.
 
+## Why two Python environments?
+
+Chatterbox 0.1.7 pins `torch==2.6.0` and `torchaudio==2.6.0`, while current
+pyannote.audio requires PyTorch 2.8 or newer. That dependency graph cannot be
+satisfied safely in one environment. VoiceRig therefore treats the split as an
+architecture boundary rather than fighting pip:
+
+- `.venv`: VoiceRig app + Chatterbox + official CUDA-enabled PyTorch 2.6.0.
+- `.venv-diarization`: current pyannote + CPU-only PyTorch.
+
+Diarization receives normalized WAV paths over a tiny subprocess/JSON protocol.
+All uploaded clips are processed in one worker invocation so pyannote is loaded
+only once per voice build.
+
 ## GPU/VRAM budget (MVP invariant)
 
-VoiceRig targets a single 12 GB NVIDIA GPU. The default device split is deliberate:
+VoiceRig targets a single 12 GB NVIDIA GPU. The device split is deliberate:
 
-- Chatterbox Multilingual V3: CUDA when available.
-- pyannote diarization: CPU by default.
+- Chatterbox Multilingual V3 owns CUDA.
+- pyannote diarization is CPU-only by construction.
 - Only one voice-build job may run at a time.
-- Both heavyweight models are cached instead of reloaded per file/request.
+- Chatterbox is cached instead of reloaded for each operation.
+- ModelRig can use the same Chatterbox runtime through VoiceRig's loopback TTS sidecar.
 
-This keeps diarization from contending with Chatterbox for VRAM and makes the rig's
-memory use predictable. `VOICERIG_DIARIZATION_DEVICE=cuda` is an explicit opt-in,
-not an automatic optimization.
+This keeps speaker analysis from contending for GPU VRAM and removes the
+Chatterbox/pyannote PyTorch-version conflict at the same time.

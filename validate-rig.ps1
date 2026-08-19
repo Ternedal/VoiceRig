@@ -5,6 +5,7 @@ param(
     [switch]$RequirePiperFallback,
     [string]$VoiceRigUrl = "http://127.0.0.1:8765",
     [string]$ModelRigUrl = "http://127.0.0.1:8080",
+    [string]$ModelRigWorkerUrl = "http://127.0.0.1:8099",
     [string]$ModelRigToken = $env:MODELRIG_TOKEN
 )
 
@@ -56,6 +57,7 @@ if ($Source.Count -eq 0) {
         Write-Host "ModelRig backend: $ModelRigUrl (Bearer-token kræves)"
     }
     if ($RequirePiperFallback) {
+        Write-Host "ModelRig worker: $ModelRigWorkerUrl (kun loopback; bruges til rigtig Piper-WAV)"
         Write-Host "Piper fallback: kræves; VoiceRig stoppes kortvarigt og genstartes automatisk i try/finally."
     }
     Write-Host "Output gemmes i .\validation-output"
@@ -67,10 +69,11 @@ $Code = $LASTEXITCODE
 
 if ($Code -eq 0 -and $RequirePiperFallback) {
     Write-Host ""
-    Write-Host "Kører automatisk Piper fallback + VoiceRig restore..."
+    Write-Host "Kører automatisk Piper fallback + rigtig Piper-syntese + VoiceRig restore..."
     & (Join-Path $PSScriptRoot "test-piper-fallback.ps1") `
         -VoiceRigUrl $VoiceRigUrl `
         -ModelRigUrl $ModelRigUrl `
+        -ModelRigWorkerUrl $ModelRigWorkerUrl `
         -ModelRigToken $ModelRigToken `
         -Report (Join-Path $PSScriptRoot "piper-fallback-report.json")
     $Code = $LASTEXITCODE
@@ -79,7 +82,7 @@ if ($Code -eq 0 -and $RequirePiperFallback) {
 Write-Host ""
 if ($Code -eq 0) {
     if ($RequirePiperFallback) {
-        Write-Host "VoiceRig-valideringen bestod inkl. ModelRig og Piper fallback."
+        Write-Host "VoiceRig-valideringen bestod inkl. ModelRig, rigtig Piper fallback-WAV og VoiceRig restore."
     } else {
         Write-Host "VoiceRig-valideringen bestod."
     }

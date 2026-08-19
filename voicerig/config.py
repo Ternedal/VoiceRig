@@ -26,3 +26,13 @@ def max_upload_mb() -> int:
 def modelrig_token() -> str | None:
     value = os.getenv("MODELRIG_TOKEN", "").strip()
     return value or None
+
+
+def allow_undiarized_fallback() -> bool:
+    """Unsafe/developer escape hatch; product builds fail closed by default.
+
+    Without diarization VoiceRig cannot know whether an interview/video contains
+    one or several people, so silently cloning the raw audio is not safe enough
+    for the normal 'drop clips and forget the details' workflow.
+    """
+    return os.getenv("VOICERIG_ALLOW_UNDIARIZED", "0").strip().lower() in {"1", "true", "yes", "on"}

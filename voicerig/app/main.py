@@ -8,12 +8,15 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, create_voice
+from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
+from voicerig.engines.package_runtime import status as tts_runtime_status
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import hardware_status
 
 app = FastAPI(title="VoiceRig", version="0.1.0")
+app.include_router(tts_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
 
@@ -25,7 +28,13 @@ def index() -> str:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "service": "voicerig", "version": "0.1.0", "hardware": hardware_status()}
+    return {
+        "ok": True,
+        "service": "voicerig",
+        "version": "0.1.0",
+        "hardware": hardware_status(),
+        "tts": tts_runtime_status(),
+    }
 
 
 @app.post("/api/voices")

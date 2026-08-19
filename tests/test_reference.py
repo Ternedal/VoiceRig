@@ -4,7 +4,7 @@ import wave
 from pathlib import Path
 
 from voicerig.analysis.diarization import Segment
-from voicerig.analysis.reference import select_reference, wav_duration
+from voicerig.analysis.reference import rank_references, select_reference, wav_duration
 from voicerig.media.ffmpeg import stitch_wav_segments
 
 
@@ -45,6 +45,26 @@ def test_reference_can_stitch_multiple_short_turns_without_copying_gaps(tmp_path
 
     stitched = tmp_path / "stitched.wav"
     stitch_wav_segments(candidate.source, stitched, list(candidate.parts))
-    # 6.4 seconds of selected speech plus one 80 ms separator. The 1.3 second
-    # source gap is not copied because it may contain another speaker.
     assert 6.45 < wav_duration(stitched) < 6.55
+
+
+def test_backup_references_prefer_diverse_non_duplicate_windows(tmp_path: Path):
+    wav = tmp_path / "long-voice.wav"
+    make_tone(wav, seconds=30.0)
+
+    ranked = rank_references([wav], limit=4, max_overlap_ratio=0.5)
+
+    assert len(ranked) >= 3
+    assert ranked[0].score >= ranked[-1].score
+    starts = [round(candidate.start, 1) for candidate in ranked]
+    assert len(starts) == len(set(starts))
+    # Ten-second candidates may overlap by at most half; exact near-duplicates
+    # from the sliding window must not fill the backup slots.
+    for idx, candidate in enumerate(ranked):
+        for other in ranked[idx + 1:]:
+            if candidate.source != other.source:
+                continue
+            a0, a1 = candidate.start, candidate.start + candidate.duration
+            b0, b1 = other.start, other.start + other.duration
+            overlap = max(0.0, min(a1, b1) - max(a0, b0))
+            assert overlap / min(candidate.duration, other.duration) <= 0.5 + 1e-9

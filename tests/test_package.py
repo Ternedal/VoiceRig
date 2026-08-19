@@ -69,6 +69,32 @@ def test_rejects_path_traversal(tmp_path: Path):
         validate_package(package)
 
 
+def test_rejects_path_like_manifest_id_before_runtime_materialization(tmp_path: Path):
+    package = tmp_path / "bad-id.mrvoice"
+    manifest = _manifest(id="../../escape")
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr("checksums.json", "{}")
+        zf.writestr("reference.wav", b"a")
+        zf.writestr("conditioning.pt", b"b")
+        zf.writestr("preview.wav", b"c")
+    with pytest.raises(ValueError, match="Manifestets id"):
+        validate_package(package)
+
+
+def test_rejects_undocumented_reference_payload_name(tmp_path: Path):
+    package = tmp_path / "bad-reference-name.mrvoice"
+    with zipfile.ZipFile(package, "w") as zf:
+        zf.writestr("manifest.json", "{}")
+        zf.writestr("checksums.json", "{}")
+        zf.writestr("reference.wav", b"a")
+        zf.writestr("conditioning.pt", b"b")
+        zf.writestr("preview.wav", b"c")
+        zf.writestr("references/arbitrary.wav", b"not allowed")
+    with pytest.raises(ValueError, match="Ukendt fil"):
+        validate_package(package)
+
+
 def test_rejects_incomplete_checksums(tmp_path: Path):
     package = tmp_path / "bad.mrvoice"
     with zipfile.ZipFile(package, "w") as zf:

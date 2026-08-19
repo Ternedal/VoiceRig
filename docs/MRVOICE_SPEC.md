@@ -32,17 +32,37 @@ eller lydfiler.
 
 ## Manifest
 
-`manifest.json` indeholder:
+Et nyt VoiceRig v1-manifest har formen:
 
-- `format = "modelrig-voice"`
-- `format_version = 1`
-- voice-id og navn
-- sprogkode
-- engine + model
-- de tre obligatoriske filreferencer
-- TTS-defaults
+```json
+{
+  "format": "modelrig-voice",
+  "format_version": 1,
+  "id": "anders-12345678",
+  "name": "Anders",
+  "language": "da",
+  "engine": {
+    "name": "chatterbox-multilingual",
+    "model": "v3",
+    "revision": "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
+  },
+  "files": {
+    "reference": "reference.wav",
+    "conditioning": "conditioning.pt",
+    "preview": "preview.wav"
+  },
+  "defaults": {
+    "exaggeration": 0.5,
+    "cfg_weight": 0.5,
+    "temperature": 0.8
+  }
+}
+```
 
-V1 produceres med `chatterbox-multilingual` / `v3`.
+`engine.revision` identificerer den eksakte Chatterbox-kilde, der producerede
+den serialiserede `conditioning.pt`. Feltet er valgfrit på formatniveau for at
+bevare læsning af tidlige v1-profiler, men nye VoiceRig-profiler skal skrive det.
+Hvis feltet findes, skal det være et lowercase 40-tegns Git commit-id.
 
 Importer skal validere typer og ranges før værdier sendes til en TTS-engine.
 VoiceRigs v1-validator kræver finite tal og accepterer kun:
@@ -54,6 +74,28 @@ temperature   0.05 .. 5.0
 ```
 
 JSON-konstanter som `NaN` og `Infinity` er ugyldige.
+
+## Conditioning-portabilitet
+
+`conditioning.pt` er en **optimering**, ikke den autoritative stemmekilde.
+`reference.wav` er autoritativ.
+
+Runtime-reglen er:
+
+1. Hvis `engine.name/model` ikke er understøttet, afvis pakken.
+2. Hvis `engine.revision` matcher den kørende VoiceRig-revision, må
+   `conditioning.pt` indlæses direkte.
+3. Hvis revisionen mangler, er anderledes eller den serialiserede conditioning
+   ikke kan indlæses, skal runtime regenerere conditioning fra `reference.wav`.
+4. Den regenererede conditioning kan caches lokalt, men ændrer ikke selve
+   `.mrvoice`-pakken.
+
+Dermed kan en profil overleve en fremtidig Chatterbox-opgradering uden at lade
+binær modelstate foregive at være kompatibel på tværs af revisioner.
+
+Runtime-cacheidentiteten skal desuden følge den konkrete package-fil (voice-id,
+revision, path, mtime/size og device), så en erstattet pakke med samme voice-id
+ikke kan genbruge stale mutable conditioning-state.
 
 ## Checksums
 
@@ -102,7 +144,6 @@ Importer skal desuden afvise:
 En v1-importer må ikke antage, at fremtidige `.mrvoice`-versioner har samme
 struktur. `format_version` skal kontrolleres før payloaden fortolkes.
 
-Hvis et fremtidigt Chatterbox-conditioning-format ikke længere kan indlæses,
-skal `reference.wav` være den autoritative regeneration-kilde. Backup-references
-kan bruges til kvalitetsevaluering eller en fremtidig regeneration-strategi,
-men er ikke nødvendige for at åbne en gyldig v1-pakke.
+`reference.wav` skal altid kunne bruges som regeneration-kilde. Backup-references
+kan bruges til kvalitetsevaluering eller en fremtidig multi-reference-
+regeneration, men er ikke nødvendige for at åbne en gyldig v1-pakke.

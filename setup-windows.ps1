@@ -71,9 +71,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------------------------------------------------------------------------
-# Diarization runtime: verified pyannote.audio 4.0.7 needs a newer torch than
-# Chatterbox's exact torch 2.6 pin. Keep it in a separate CPU-only venv. This
-# also guarantees that speaker analysis cannot consume GPU VRAM.
+# Diarization runtime: exact CPU-only compatibility set verified for pyannote
+# 4.0.7. TorchCodec 0.7 is the matching codec generation for torch 2.8 and has
+# Windows CPython 3.11 wheels. Pinning all four keeps speaker analysis stable.
 # ---------------------------------------------------------------------------
 New-Venv ".venv-diarization"
 $DiarPy = ".\.venv-diarization\Scripts\python.exe"
@@ -81,18 +81,20 @@ $DiarPy = ".\.venv-diarization\Scripts\python.exe"
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i diarization-miljøet." }
 
 $DiarReady = $false
-& $DiarPy -c "import pyannote.audio,torch,sys; sys.exit(0 if pyannote.audio.__version__ == '4.0.7' and not torch.cuda.is_available() else 1)" 2>$null
+& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio,sys; ok=(pyannote.audio.__version__=='4.0.7' and torch.__version__.startswith('2.8.0') and torchaudio.__version__.startswith('2.8.0') and m.version('torchcodec')=='0.7.0' and not torch.cuda.is_available()); sys.exit(0 if ok else 1)" 2>$null
 if ($LASTEXITCODE -eq 0) { $DiarReady = $true }
 if (-not $DiarReady) {
     Write-Host "Installerer verificeret CPU-runtime til speaker-analyse..."
-    & $DiarPy -m pip install --upgrade torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-    if ($LASTEXITCODE -ne 0) { throw "CPU-PyTorch til diarization kunne ikke installeres." }
-    & $DiarPy -m pip install --upgrade --force-reinstall "pyannote.audio==4.0.7"
+    & $DiarPy -m pip install --upgrade --force-reinstall `
+        torch==2.8.0 torchaudio==2.8.0 torchcodec==0.7.0 `
+        --index-url https://download.pytorch.org/whl/cpu
+    if ($LASTEXITCODE -ne 0) { throw "CPU-PyTorch/TorchCodec til diarization kunne ikke installeres." }
+    & $DiarPy -m pip install "pyannote.audio==4.0.7"
     if ($LASTEXITCODE -ne 0) { throw "pyannote.audio 4.0.7 kunne ikke installeres." }
 }
 
-& $DiarPy -c "import pyannote.audio,torch; assert pyannote.audio.__version__ == '4.0.7'; assert not torch.cuda.is_available(); print(f'pyannote {pyannote.audio.__version__} CPU runtime OK | torch {torch.__version__}')"
-if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø er ikke funktionsdygtigt eller har forkert version." }
+& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio; assert pyannote.audio.__version__=='4.0.7'; assert torch.__version__.startswith('2.8.0'); assert torchaudio.__version__.startswith('2.8.0'); assert m.version('torchcodec')=='0.7.0'; assert not torch.cuda.is_available(); print(f'pyannote {pyannote.audio.__version__} CPU runtime OK | torch {torch.__version__} | torchaudio {torchaudio.__version__} | torchcodec {m.version(chr(116)+chr(111)+chr(114)+chr(99)+chr(104)+chr(99)+chr(111)+chr(100)+chr(101)+chr(99))}')"
+if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø matcher ikke den verificerede runtime-kontrakt." }
 
 # Download and actually load both ML stacks now. This makes setup fail early
 # with an actionable error instead of turning the first 'Opret stemme' click
@@ -105,7 +107,7 @@ if (-not $SkipModelWarmup) {
         throw "Model-warmup fejlede. Hvis pyannote mangler adgang: acceptér community-1-vilkårene, sæt HF_TOKEN i .env og kør setup-windows.ps1 igen."
     }
 } else {
-    Write-Warning "Model-warmup er sprunget over. Første voice-build kan derfor skulle hente modeller."
+    Write-Warning "Model-warmup er sprunget over. Voice creation forbliver låst indtil setup køres med model-warmup."
 }
 
 & .\install-autostart.ps1
@@ -124,5 +126,5 @@ if (-not (Test-VoiceRig)) {
 
 Write-Host ""
 Write-Host "VoiceRig er installeret, modellerne er verificeret og autostart er sat for din Windows-bruger."
-Write-Host "GPU-plan: Chatterbox V3 = CUDA i .venv; pyannote 4.0.7 = CPU i .venv-diarization."
+Write-Host "GPU-plan: Chatterbox V3 = CUDA; pyannote 4.0.7 / torch 2.8 / torchcodec 0.7 = CPU."
 Write-Host "Åbn VoiceRig med: .\start-windows.ps1"

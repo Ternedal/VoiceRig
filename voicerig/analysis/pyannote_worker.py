@@ -82,12 +82,19 @@ def main() -> int:
         return 3
 
     if args == ["--preload"]:
+        try:
+            import pyannote.audio
+            package_version = str(pyannote.audio.__version__)
+        except Exception as exc:
+            print(f"pyannote version unavailable: {exc}", file=sys.stderr)
+            return 3
         print(
             _READY_MARKER
             + json.dumps(
                 {
                     "ok": True,
                     "model": _MODEL_ID,
+                    "package_version": package_version,
                     "telemetry": os.getenv("PYANNOTE_METRICS_ENABLED", "0"),
                 },
                 ensure_ascii=False,

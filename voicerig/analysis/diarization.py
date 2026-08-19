@@ -150,6 +150,28 @@ def _cosine(a: tuple[float, ...], b: tuple[float, ...]) -> float:
     return dot / (na * nb)
 
 
+def _cluster_centroid(cluster: list[Speaker]) -> tuple[float, ...] | None:
+    """Duration-weighted embedding centroid for conservative speaker matching.
+
+    Comparing a new speaker with the cluster centroid avoids single-link
+    chaining, where A can match B and B can match C even though A and C are
+    clearly different people.
+    """
+    usable = [speaker for speaker in cluster if speaker.embedding is not None]
+    if not usable:
+        return None
+    dims = len(usable[0].embedding or ())
+    usable = [speaker for speaker in usable if len(speaker.embedding or ()) == dims]
+    if not usable or dims == 0:
+        return None
+    weights = [max(speaker.duration, 0.001) for speaker in usable]
+    total = sum(weights)
+    return tuple(
+        sum((speaker.embedding or ())[idx] * weight for speaker, weight in zip(usable, weights)) / total
+        for idx in range(dims)
+    )
+
+
 def primary_speaker_segments(
     results: list[DiarizationResult],
     similarity_threshold: float = 0.75,
@@ -165,10 +187,10 @@ def primary_speaker_segments(
         best_score = similarity_threshold
         if node.embedding is not None:
             for idx, cluster in enumerate(clusters):
-                candidates = [s for s in cluster if s.embedding is not None]
-                if not candidates:
+                centroid = _cluster_centroid(cluster)
+                if centroid is None:
                     continue
-                score = max(_cosine(node.embedding, s.embedding) for s in candidates)
+                score = _cosine(node.embedding, centroid)
                 if score >= best_score:
                     best_score, best_idx = score, idx
         if best_idx is None:

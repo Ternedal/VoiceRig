@@ -42,6 +42,25 @@ def test_build_and_validate_package(tmp_path: Path):
     assert manifest["engine"]["model"] == "v3"
 
 
+def test_backup_references_are_packaged_and_covered_by_checksums(tmp_path: Path):
+    ref = tmp_path / "reference.wav"; ref.write_bytes(b"RIFF-reference")
+    cond = tmp_path / "conditioning.pt"; cond.write_bytes(b"conditioning")
+    preview = tmp_path / "preview.wav"; preview.write_bytes(b"RIFF-preview")
+    alt1 = tmp_path / "alt1.wav"; alt1.write_bytes(b"RIFF-alt-1")
+    alt2 = tmp_path / "alt2.wav"; alt2.write_bytes(b"RIFF-alt-2")
+    package = tmp_path / "portable.mrvoice"
+
+    build_package("Portable", "da", ref, cond, preview, package, alternatives=[alt1, alt2])
+    validate_package(package)
+
+    with zipfile.ZipFile(package, "r") as zf:
+        names = set(zf.namelist())
+        checksums = json.loads(zf.read("checksums.json"))
+    assert "references/candidate_01.wav" in names
+    assert "references/candidate_02.wav" in names
+    assert set(checksums) == names - {"manifest.json", "checksums.json"}
+
+
 def test_rejects_path_traversal(tmp_path: Path):
     package = tmp_path / "evil.mrvoice"
     with zipfile.ZipFile(package, "w") as zf:
@@ -78,8 +97,6 @@ def test_rejects_unknown_payload(tmp_path: Path):
 def test_rejects_zip_bomb_sized_reference_before_payload_read(tmp_path: Path):
     package = tmp_path / "oversized.mrvoice"
     with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Highly compressible content keeps the archive tiny while its declared
-        # uncompressed size exceeds the 16 MiB WAV contract.
         zf.writestr("reference.wav", b"\0" * (17 * 1024 * 1024))
     with pytest.raises(ValueError, match="reference.wav er for stor"):
         validate_package(package)

@@ -78,8 +78,7 @@ def create_voice(name: str, sources: list[Path], output_dir: Path, language: str
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
-        engine.build_conditioning(reference, conditioning)
-        engine.preview(reference, preview)
+        engine.build_artifacts(reference, conditioning, preview)
         validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
         package = output_dir / f"{slugify(name)}.mrvoice"

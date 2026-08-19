@@ -7,6 +7,7 @@ from pathlib import Path
 
 from voicerig.analysis.diarization import DiarizationUnavailable, diarize_many, primary_speaker_segments
 from voicerig.analysis.reference import select_reference
+from voicerig.config import allow_undiarized_fallback
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.media.ffmpeg import cut_wav, extract_mono_wav, stitch_wav_segments
 from voicerig.profiles.package import build_package, slugify
@@ -52,7 +53,17 @@ def create_voice(name: str, sources: list[Path], output_dir: Path, language: str
             results = diarize_many(wavs)
             diarizations = primary_speaker_segments(results)
             used = bool(diarizations)
-        except DiarizationUnavailable:
+            if not used and not allow_undiarized_fallback():
+                raise DiarizationUnavailable(
+                    "Speaker-analysen fandt ingen brugbar stemmeidentitet i materialet."
+                )
+        except DiarizationUnavailable as exc:
+            if not allow_undiarized_fallback():
+                raise RuntimeError(
+                    "VoiceRig kunne ikke udføre sikker speaker-analyse. "
+                    "Kontrollér HF_TOKEN, community-1-modeladgang og den separate "
+                    f"diarization-runtime. Detalje: {exc}"
+                ) from exc
             diarizations = {}
 
         candidate = select_reference(wavs, diarizations)

@@ -1,7 +1,10 @@
 from pathlib import Path
 import tomllib
 
-from voicerig.model_contract import CHATTERBOX_SOURCE_REVISION
+from voicerig.model_contract import (
+    CHATTERBOX_SOURCE_REVISION,
+    PYANNOTE_PACKAGE_VERSION,
+)
 
 
 def _project():
@@ -16,6 +19,11 @@ def test_voice_extra_pins_verified_chatterbox_v3_source_revision():
     assert voice[0].startswith("chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@")
     assert voice[0].endswith(CHATTERBOX_SOURCE_REVISION)
     assert project["tool"]["hatch"]["metadata"]["allow-direct-references"] is True
+
+
+def test_diarization_extra_pins_verified_pyannote_version():
+    diarization = _project()["project"]["optional-dependencies"]["diarization"]
+    assert diarization == [f"pyannote.audio=={PYANNOTE_PACKAGE_VERSION}"]
 
 
 def test_dotenv_is_a_direct_runtime_dependency():

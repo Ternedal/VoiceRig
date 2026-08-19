@@ -2,8 +2,11 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv-diarization/
 .env
 voicerig-data/
+validation-output/
+validation-report.json
 *.mrvoice
 *.wav
 *.mp3

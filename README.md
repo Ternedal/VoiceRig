@@ -12,7 +12,7 @@ VoiceRig laver en portabel ModelRig-stemmeprofil ud fra almindelige lyd- og vide
 - Bygger Chatterbox Multilingual V3 voice conditioning.
 - Genererer dansk preview.
 - Pakker `reference.wav`, `conditioning.pt`, `preview.wav`, manifest og checksums i `.mrvoice`.
-- Forsøger automatisk installation gennem ModelRig-backendens `/api/v1/voices/import`.
+- Installerer automatisk i den lokale ModelRig voice-mappe; remote API-mode er fallback.
 - Fungerer som local-first; kildefiler sendes ikke til en cloudtjeneste af VoiceRig.
 
 ## Krav
@@ -56,7 +56,7 @@ Standardadresse er `http://127.0.0.1:8080`. Den kan ændres med:
 MODELRIG_BASE_URL=http://127.0.0.1:8080
 ```
 
-ModelRig skal implementere `POST /api/v1/voices/import` for direkte installation. ModelRigs nuværende arkitektur bruger Go-backenden på port 8080 og bearer-auth; `MODELRIG_TOKEN` kan derfor sættes, når import-endpointet tilføjes. Indtil da kan `.mrvoice` downloades manuelt fra VoiceRig.
+Når ModelRig er lokal (standard), kopierer VoiceRig automatisk `.mrvoice` til `~/.kaliv/voices/` og gør den til default. ModelRig behøver derfor ikke være startet under oprettelsen. Et backend-importendpoint beholdes som fremtidig mulighed for split-host/remote installation.
 
 ## Status
 

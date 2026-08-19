@@ -7,6 +7,7 @@ from voicerig.model_contract import (
     CHATTERBOX_SOURCE_REVISION,
     MODEL_READINESS_SCHEMA,
     PYANNOTE_MODEL_ID,
+    PYANNOTE_PACKAGE_VERSION,
 )
 
 
@@ -121,7 +122,10 @@ def test_model_readiness_marker_must_match_current_contract(tmp_path, monkeypatc
                     "model": CHATTERBOX_MODEL,
                     "revision": CHATTERBOX_SOURCE_REVISION,
                 },
-                "diarization": {"model": PYANNOTE_MODEL_ID},
+                "diarization": {
+                    "package_version": PYANNOTE_PACKAGE_VERSION,
+                    "model": PYANNOTE_MODEL_ID,
+                },
             }
         ),
         encoding="utf-8",
@@ -129,7 +133,7 @@ def test_model_readiness_marker_must_match_current_contract(tmp_path, monkeypatc
     assert runtime.model_warmup_status()["verified"] is True
 
     payload = json.loads(marker.read_text(encoding="utf-8"))
-    payload["chatterbox"]["revision"] = "0" * 40
+    payload["diarization"]["package_version"] = "4.9.9"
     marker.write_text(json.dumps(payload), encoding="utf-8")
     stale = runtime.model_warmup_status()
     assert stale["verified"] is False

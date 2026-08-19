@@ -11,6 +11,7 @@ and verifies the community-1 pipeline without processing user audio.
 """
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import os
 import sys
@@ -84,9 +85,12 @@ def main() -> int:
     if args == ["--preload"]:
         try:
             import pyannote.audio
+            import torch
+            import torchaudio
             package_version = str(pyannote.audio.__version__)
+            torchcodec_version = importlib.metadata.version("torchcodec")
         except Exception as exc:
-            print(f"pyannote version unavailable: {exc}", file=sys.stderr)
+            print(f"diarization runtime version unavailable: {exc}", file=sys.stderr)
             return 3
         print(
             _READY_MARKER
@@ -95,6 +99,10 @@ def main() -> int:
                     "ok": True,
                     "model": _MODEL_ID,
                     "package_version": package_version,
+                    "torch_version": str(torch.__version__),
+                    "torchaudio_version": str(torchaudio.__version__),
+                    "torchcodec_version": str(torchcodec_version),
+                    "cuda_available": bool(torch.cuda.is_available()),
                     "telemetry": os.getenv("PYANNOTE_METRICS_ENABLED", "0"),
                 },
                 ensure_ascii=False,

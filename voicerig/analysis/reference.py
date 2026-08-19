@@ -16,6 +16,7 @@ class ReferenceCandidate:
     duration: float
     score: float
     speaker: str | None = None
+    parts: tuple[tuple[float, float], ...] = ()
 
 
 def wav_duration(path: Path) -> float:
@@ -47,6 +48,51 @@ def _window_quality(path: Path, start_s: float, duration_s: float) -> float:
     return round(audible * headroom * clip_penalty, 4)
 
 
+def _stitched_candidate(
+    wav: Path,
+    speaker: str,
+    segments: list[Segment],
+    target_s: float,
+) -> ReferenceCandidate | None:
+    scored: list[tuple[Segment, float]] = []
+    for seg in segments:
+        if seg.duration < 0.8:
+            continue
+        scored.append((seg, _window_quality(wav, seg.start, seg.duration)))
+    if sum(seg.duration for seg, _score in scored) < 5.5:
+        return None
+
+    selected: list[tuple[float, float, float]] = []
+    speech_s = 0.0
+    weighted_quality = 0.0
+    for seg, quality in sorted(scored, key=lambda item: item[1], reverse=True):
+        remaining = target_s - speech_s
+        if remaining <= 0.0:
+            break
+        take = min(seg.duration, remaining)
+        selected.append((seg.start, take, quality))
+        speech_s += take
+        weighted_quality += quality * take
+    if speech_s < 5.5:
+        return None
+
+    selected.sort(key=lambda item: item[0])
+    parts = tuple((start, duration) for start, duration, _quality in selected)
+    quality = weighted_quality / speech_s if speech_s else 0.0
+    # Prefer one genuinely contiguous clean turn when quality is otherwise equal,
+    # but allow stitched natural conversation to win over a poor long segment.
+    stitch_penalty = 0.98 if len(parts) > 1 else 1.0
+    score = quality * min(1.0, speech_s / target_s) * stitch_penalty
+    return ReferenceCandidate(
+        wav,
+        parts[0][0],
+        speech_s,
+        round(score, 4),
+        speaker,
+        parts if len(parts) > 1 else (),
+    )
+
+
 def select_reference(
     wavs: list[Path],
     diarizations: dict[Path, list[Segment]] | None = None,
@@ -70,6 +116,9 @@ def select_reference(
                 score = _window_quality(wav, seg.start, dur)
                 score *= min(1.0, dur / target_s)
                 candidates.append(ReferenceCandidate(wav, seg.start, dur, score, speaker))
+            stitched = _stitched_candidate(wav, speaker, speaker_segments, target_s)
+            if stitched is not None:
+                candidates.append(stitched)
         else:
             total = wav_duration(wav)
             if total < 5.5:

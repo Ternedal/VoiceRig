@@ -17,30 +17,38 @@ def test_setup_is_windows_powershell_51_safe_and_uses_nonterminating_native_prob
     assert '& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio,sys; ok=' not in text
 
 
-def test_setup_stops_only_the_local_voicerig_launcher_before_mutating_runtime():
+def test_setup_identifies_retry_service_by_checkout_root_or_private_python_before_mutating_runtime():
     text = Path("setup-windows.ps1").read_text(encoding="utf-8-sig")
 
     assert 'function Stop-LocalVoiceRigForRuntimeMutation' in text
-    assert 'function Get-LocalVoiceRigLauncherPid' in text
+    assert 'function Test-SamePath' in text
     assert 'Get-ProcessExecutablePath' in text
-    assert 'ParentProcessId' in text
     assert '[System.StringComparison]::OrdinalIgnoreCase' in text
     assert 'Port 8765 svarer, men processen identificerer sig ikke sikkert som VoiceRig' in text
     assert 'den kører ikke fra denne checkout' in text
     assert 'Get-Process -Name "voicerig"' in text
 
-    # pip/distlib may expose a Python child as the health PID while the
-    # voicerig.exe parent is the file-locking launcher. The retry path must
-    # accept only that exact direct-parent relationship and stop both sides.
-    assert '$LauncherPid = Get-LocalVoiceRigLauncherPid $HealthProcess $ExpectedFull' in text
-    assert 'if ($HealthPid -ne $LauncherPid)' in text
-    assert 'Stop-Process -Id $HealthPid -Force' in text
-    assert 'Stop-Process -Id $LauncherPid -Force' in text
+    # Current services expose an authoritative resolved checkout root.
+    assert '$Health.source.root' in text
+    assert 'Test-SamePath ([string]$Health.source.root) $ExpectedRootFull' in text
 
-    stop_call = 'Stop-LocalVoiceRigForRuntimeMutation $VoiceRigExePath'
+    # RC2-RC6 did not expose source.root. Their health PID may be either the
+    # distlib launcher or this checkout's private venv Python process.
+    assert '$ExpectedPythonFull' in text
+    assert 'Test-SamePath $HealthPath $ExpectedFull' in text
+    assert 'Test-SamePath $HealthPath $ExpectedPythonFull' in text
+
+    # A stale launcher from this checkout is also removed before pip replaces it.
+    assert 'Stopper hængende lokal VoiceRig-launcher' in text
+
+    stop_call = 'Stop-LocalVoiceRigForRuntimeMutation $VoiceRigExePath $MainPythonPath $PSScriptRoot'
     install_call = '& $MainPy -m pip install -e ".[voice]"'
     assert stop_call in text
     assert install_call in text
     assert text.index(stop_call) < text.index(install_call), (
-        "the local VoiceRig launcher must be stopped before pip replaces voicerig.exe"
+        "the local VoiceRig runtime must be stopped before pip replaces voicerig.exe"
     )
+
+    # New installations must prove the restarted service belongs to this root.
+    assert '$Ready.source.root' in text
+    assert 'VoiceRig-processen rapporterer ikke den installerede checkout-root' in text

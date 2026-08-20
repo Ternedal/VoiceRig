@@ -21,11 +21,21 @@ def test_setup_stops_only_the_local_voicerig_launcher_before_mutating_runtime():
     text = Path("setup-windows.ps1").read_text(encoding="utf-8-sig")
 
     assert 'function Stop-LocalVoiceRigForRuntimeMutation' in text
+    assert 'function Get-LocalVoiceRigLauncherPid' in text
     assert 'Get-ProcessExecutablePath' in text
+    assert 'ParentProcessId' in text
     assert '[System.StringComparison]::OrdinalIgnoreCase' in text
     assert 'Port 8765 svarer, men processen identificerer sig ikke sikkert som VoiceRig' in text
     assert 'den kører ikke fra denne checkout' in text
     assert 'Get-Process -Name "voicerig"' in text
+
+    # pip/distlib may expose a Python child as the health PID while the
+    # voicerig.exe parent is the file-locking launcher. The retry path must
+    # accept only that exact direct-parent relationship and stop both sides.
+    assert '$LauncherPid = Get-LocalVoiceRigLauncherPid $HealthProcess $ExpectedFull' in text
+    assert 'if ($HealthPid -ne $LauncherPid)' in text
+    assert 'Stop-Process -Id $HealthPid -Force' in text
+    assert 'Stop-Process -Id $LauncherPid -Force' in text
 
     stop_call = 'Stop-LocalVoiceRigForRuntimeMutation $VoiceRigExePath'
     install_call = '& $MainPy -m pip install -e ".[voice]"'

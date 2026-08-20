@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -22,15 +24,47 @@ def load_local_env(path: Path | None = None) -> bool:
     return bool(load_dotenv(dotenv_path=dotenv_path, override=False))
 
 
-# Deterministic product configuration: OS/session environment wins, `.env`
-# fills only missing values.
 load_local_env()
 
 
+def _default_data_dir() -> Path:
+    if sys.platform == "win32":
+        local = os.getenv("LOCALAPPDATA", "").strip()
+        if local:
+            return Path(local).expanduser() / "VoiceRig"
+        return Path.home() / "AppData" / "Local" / "VoiceRig"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "VoiceRig"
+    xdg = os.getenv("XDG_DATA_HOME", "").strip()
+    return (Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share") / "voicerig"
+
+
+def _legacy_repo_data_dir() -> Path:
+    return (_REPO_ROOT / "voicerig-data").resolve()
+
+
 def data_dir() -> Path:
-    root = Path(os.getenv("VOICERIG_DATA_DIR", "voicerig-data")).expanduser().resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    explicit = os.getenv("VOICERIG_DATA_DIR", "").strip()
+    if explicit:
+        root = Path(explicit).expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    target = _default_data_dir().expanduser().resolve()
+    legacy = _legacy_repo_data_dir()
+    if not target.exists() and legacy.is_dir() and legacy != target:
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy), str(target))
+        except OSError:
+            # Never hide existing jobs/profiles/readiness just because migration
+            # could not complete. Continue from the old location and let the
+            # diagnostics/UI surface the installation issue instead of losing data.
+            legacy.mkdir(parents=True, exist_ok=True)
+            return legacy
+
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def modelrig_base_url() -> str | None:

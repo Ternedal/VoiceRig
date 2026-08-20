@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from voicerig import __version__
 from voicerig.app.netguard import allow_lan, is_loopback_client
@@ -15,6 +15,14 @@ from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
 from voicerig.engines.package_runtime import status as tts_runtime_status
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
+from voicerig.profiles.library import (
+    delete_voice as delete_library_voice,
+    find_package,
+    import_package,
+    list_voices,
+    preview_wav,
+    set_default,
+)
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats, reset_cuda_peaks, voice_build_readiness
 from voicerig.source_control import source_status
@@ -23,6 +31,7 @@ app = FastAPI(title="VoiceRig", version=__version__)
 app.include_router(tts_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
+_IMPORT_LIMIT_BYTES = 160 * 1024 * 1024
 
 
 @app.middleware("http")
@@ -74,6 +83,83 @@ def readiness() -> dict:
     result["source"] = source_status()
     result["pid"] = os.getpid()
     return result
+
+
+@app.get("/api/voices")
+def voice_library() -> dict:
+    return {"ok": True, **list_voices()}
+
+
+@app.post("/api/voices/import")
+def import_voice_profile(
+    voice: UploadFile = File(...),
+    make_default: bool = Form(False),
+) -> dict:
+    filename = voice.filename or ""
+    if Path(filename).name != filename or not filename.lower().endswith(".mrvoice"):
+        raise HTTPException(status_code=415, detail="Vælg en gyldig .mrvoice-fil.")
+
+    with tempfile.TemporaryDirectory(prefix="voicerig-import-") as tmp:
+        target = Path(tmp) / "import.mrvoice"
+        total = 0
+        try:
+            with target.open("wb") as f:
+                while chunk := voice.file.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > _IMPORT_LIMIT_BYTES:
+                        raise HTTPException(status_code=413, detail=".mrvoice-filen er for stor.")
+                    f.write(chunk)
+            imported = import_package(target, filename)
+        except HTTPException:
+            raise
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=f"Kunne ikke importere stemmen: {exc}") from exc
+
+    activated = None
+    if make_default:
+        try:
+            activated = set_default(imported["package"])
+        except (OSError, RuntimeError, ValueError, FileNotFoundError) as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Stemmen blev importeret, men kunne ikke aktiveres: {exc}",
+            ) from exc
+    return {"ok": True, "voice": imported, "activated": activated}
+
+
+@app.get("/api/voices/{filename}/preview")
+def voice_preview(filename: str):
+    try:
+        raw = preview_wav(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=f"Preview kan ikke afspilles: {exc}") from exc
+    return Response(
+        content=raw,
+        media_type="audio/wav",
+        headers={"Content-Disposition": f'inline; filename="{Path(filename).stem}-preview.wav"'},
+    )
+
+
+@app.post("/api/voices/{filename}/default")
+def make_voice_default(filename: str) -> dict:
+    try:
+        return set_default(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Stemmen kunne ikke aktiveres: {exc}") from exc
+
+
+@app.delete("/api/voices/{filename}")
+def delete_voice_profile(filename: str) -> dict:
+    try:
+        return delete_library_voice(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Stemmen kunne ikke slettes: {exc}") from exc
 
 
 @app.post("/api/voices")
@@ -175,13 +261,13 @@ def build_voice(
 
 @app.get("/api/packages/{filename}")
 def download_package(filename: str):
-    safe = Path(filename).name
-    if safe != filename or not safe.endswith(".mrvoice"):
-        raise HTTPException(status_code=400, detail="Ugyldigt filnavn.")
-    path = data_dir() / "voices" / safe
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Stemmeprofilen findes ikke.")
-    return FileResponse(path, media_type="application/octet-stream", filename=safe)
+    try:
+        path = find_package(filename)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Stemmeprofilen kan ikke eksporteres: {exc}") from exc
+    return FileResponse(path, media_type="application/octet-stream", filename=path.name)
 
 
 def run() -> None:

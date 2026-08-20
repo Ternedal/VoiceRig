@@ -8,7 +8,8 @@ Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 
 Den aktuelle releasekandidat er altid **PR-head på tidspunktet for den fysiske
 acceptance**. Der hardcodes derfor ikke en commit-SHA i denne fil: hvis head
-ændres, er tidligere fysisk acceptance stale og skal køres igen.
+ændres, er tidligere fysisk acceptance stale og skal køres igen. Den konkrete
+grønne kandidat og CI-run dokumenteres i PR #1, ikke i versionsstyrede filer.
 
 ## 1. Kør hele den automatiske fysiske test
 

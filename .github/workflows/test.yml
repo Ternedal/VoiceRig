@@ -38,10 +38,41 @@ jobs:
           assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
           assert "VoiceRig" in UI_FILE.read_text(encoding="utf-8")
           assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")
-          paths = {getattr(route, "path", None) for route in app.routes}
-          assert "/api/diagnostics" in paths
-          assert "/api/diagnostics/bundle" in paths
-          print("wheel install smoke: PASS")
+          print("wheel metadata/assets smoke: PASS")
+          PY
+
+          export VOICERIG_DATA_DIR=/tmp/voicerig-data-smoke
+          export VOICERIG_ALLOW_LAN=0
+          /tmp/voicerig-wheel/bin/voicerig >/tmp/voicerig-service.log 2>&1 &
+          VOICERIG_PID=$!
+          trap 'kill "$VOICERIG_PID" 2>/dev/null || true' EXIT
+          /tmp/voicerig-wheel/bin/python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          health = None
+          for _ in range(60):
+              try:
+                  with urllib.request.urlopen(base + "/api/health", timeout=2) as response:
+                      health = json.loads(response.read().decode("utf-8"))
+                  if health.get("ok") is True and health.get("service") == "voicerig":
+                      break
+              except Exception:
+                  time.sleep(0.25)
+          assert health and health.get("ok") is True and health.get("service") == "voicerig", "installed Linux service did not start"
+          with urllib.request.urlopen(base + "/", timeout=5) as response:
+              html = response.read().decode("utf-8")
+          assert "VoiceRig" in html
+          with urllib.request.urlopen(base + "/api/diagnostics", timeout=5) as response:
+              diagnostics = json.loads(response.read().decode("utf-8"))
+          assert diagnostics.get("ok") is True
+          assert diagnostics.get("privacy", {}).get("contains_source_audio") is False
+          with urllib.request.urlopen(base + "/api/diagnostics/bundle", timeout=5) as response:
+              bundle = response.read()
+          assert bundle.startswith(b"PK") and len(bundle) > 100
+          print("Linux installed-service HTTP smoke: PASS")
           PY
       - name: PowerShell syntax
         shell: pwsh

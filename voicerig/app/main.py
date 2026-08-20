@@ -14,8 +14,13 @@ from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired
 from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
 from voicerig.engines.package_runtime import status as tts_runtime_status
-from voicerig.modelrig.client import ModelRigUnavailable, install_voice
+from voicerig.modelrig.client import (
+    ModelRigUnavailable,
+    install_voice,
+    status as read_modelrig_status,
+)
 from voicerig.profiles.library import (
+    default_package_name,
     delete_voice as delete_library_voice,
     find_package,
     import_package,
@@ -83,6 +88,51 @@ def readiness() -> dict:
     result["source"] = source_status()
     result["pid"] = os.getpid()
     return result
+
+
+@app.get("/api/modelrig/status")
+def modelrig_status() -> dict:
+    return read_modelrig_status(modelrig_base_url(), token=modelrig_token())
+
+
+@app.post("/api/modelrig/repair")
+def repair_modelrig(package: str | None = Form(None)) -> dict:
+    base_url = modelrig_base_url()
+    if not base_url:
+        raise HTTPException(status_code=422, detail="ModelRig URL er ikke konfigureret.")
+
+    selected = package or default_package_name()
+    if not selected:
+        library = list_voices()
+        valid = library.get("voices") or []
+        if len(valid) == 1:
+            selected = valid[0]["package"]
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="Vælg en stemme i Mine stemmer, før ModelRig repareres.",
+            )
+    try:
+        source = find_package(selected)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Den valgte stemme er ugyldig: {exc}") from exc
+
+    before = read_modelrig_status(base_url, token=modelrig_token())
+    try:
+        installed = install_voice(base_url, source, token=modelrig_token())
+    except ModelRigUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    after = read_modelrig_status(base_url, token=modelrig_token())
+    return {
+        "ok": bool(after.get("ok")),
+        "package": source.name,
+        "install": installed,
+        "before": before,
+        "after": after,
+        "detail": None if after.get("ok") else "Profilen blev installeret, men ModelRig rapporterer stadig en fejl.",
+    }
 
 
 @app.get("/api/voices")

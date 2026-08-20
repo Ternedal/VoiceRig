@@ -7,8 +7,7 @@ import zipfile
 from pathlib import Path
 
 import voicerig.diagnostics as diagnostics
-from voicerig.app.main import app
-from voicerig.app.ops_api import _safe_job
+from voicerig.app.ops_api import _safe_job, router as ops_router
 
 
 def test_redacting_formatter_removes_tokens():
@@ -79,7 +78,7 @@ def test_safe_job_excludes_original_files_and_speaker_audio():
     assert "files" not in safe
 
 
-def test_operations_routes_are_mounted_on_product_app():
-    paths = {getattr(route, "path", None) for route in app.routes}
+def test_operations_router_defines_support_endpoints():
+    paths = {getattr(route, "path", None) for route in ops_router.routes}
     assert "/api/diagnostics" in paths
     assert "/api/diagnostics/bundle" in paths

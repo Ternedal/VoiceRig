@@ -1,9 +1,24 @@
-param(
+﻿param(
     [switch]$SkipModelWarmup
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+
+function Test-NativeCommand([string]$FilePath, [string[]]$Arguments) {
+    $PreviousPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 converts native stderr into PowerShell error
+        # records. With ErrorActionPreference=Stop an expected probe failure
+        # (for example importing torch before it is installed) becomes a
+        # terminating NativeCommandError before LASTEXITCODE can be checked.
+        $ErrorActionPreference = "Continue"
+        & $FilePath @Arguments *> $null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
+}
 
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     throw "FFmpeg blev ikke fundet på PATH. Installér FFmpeg først."
@@ -19,8 +34,9 @@ if (-not (Test-Path ".env") -and (Test-Path ".env.example")) {
 
 $Python = $null
 if (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3.11 -c "import sys; assert sys.version_info[:2] == (3, 11)" 2>$null
-    if ($LASTEXITCODE -eq 0) { $Python = @("py", "-3.11") }
+    if (Test-NativeCommand -FilePath "py" -Arguments @("-3.11", "-c", "import sys; assert sys.version_info[:2] == (3, 11)")) {
+        $Python = @("py", "-3.11")
+    }
 }
 if (-not $Python -and (Get-Command python -ErrorAction SilentlyContinue)) {
     $Version = & python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
@@ -43,9 +59,10 @@ $MainPy = ".\.venv\Scripts\python.exe"
 & $MainPy -m pip install --upgrade pip setuptools wheel
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i VoiceRig-miljøet." }
 
-$CudaReady = $false
-& $MainPy -c "import torch,sys; sys.exit(0 if torch.__version__.startswith('2.6.0') and torch.cuda.is_available() else 1)" 2>$null
-if ($LASTEXITCODE -eq 0) { $CudaReady = $true }
+$CudaReady = Test-NativeCommand -FilePath $MainPy -Arguments @(
+    "-c",
+    "import torch,sys; sys.exit(0 if torch.__version__.startswith('2.6.0') and torch.cuda.is_available() else 1)"
+)
 if (-not $CudaReady) {
     Write-Host "Installerer PyTorch 2.6.0 med CUDA 12.6 support..."
     & $MainPy -m pip install --upgrade --force-reinstall `
@@ -65,9 +82,10 @@ $DiarPy = ".\.venv-diarization\Scripts\python.exe"
 & $DiarPy -m pip install --upgrade pip setuptools wheel
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i diarization-miljøet." }
 
-$DiarReady = $false
-& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio,sys; ok=(pyannote.audio.__version__=='4.0.7' and torch.__version__.startswith('2.8.0') and torchaudio.__version__.startswith('2.8.0') and m.version('torchcodec')=='0.7.0' and not torch.cuda.is_available()); sys.exit(0 if ok else 1)" 2>$null
-if ($LASTEXITCODE -eq 0) { $DiarReady = $true }
+$DiarReady = Test-NativeCommand -FilePath $DiarPy -Arguments @(
+    "-c",
+    "import importlib.metadata as m,pyannote.audio,torch,torchaudio,sys; ok=(pyannote.audio.__version__=='4.0.7' and torch.__version__.startswith('2.8.0') and torchaudio.__version__.startswith('2.8.0') and m.version('torchcodec')=='0.7.0' and not torch.cuda.is_available()); sys.exit(0 if ok else 1)"
+)
 if (-not $DiarReady) {
     Write-Host "Installerer verificeret CPU-runtime til speaker-analyse..."
     & $DiarPy -m pip install --upgrade --force-reinstall `

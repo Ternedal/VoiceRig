@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$SkipModelWarmup,
     [switch]$NoBrowser
 )

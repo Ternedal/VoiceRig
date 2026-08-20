@@ -38,6 +38,9 @@ jobs:
           assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
           assert "VoiceRig" in UI_FILE.read_text(encoding="utf-8")
           assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")
+          paths = {getattr(route, "path", None) for route in app.routes}
+          assert "/api/diagnostics" in paths
+          assert "/api/diagnostics/bundle" in paths
           print("wheel install smoke: PASS")
           PY
       - name: PowerShell syntax
@@ -107,6 +110,16 @@ jobs:
 
             $Html = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -TimeoutSec 5).Content
             if ($Html -notmatch "VoiceRig") { throw "Installeret UI blev ikke serveret korrekt på Windows." }
+
+            $Diagnostics = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/diagnostics" -TimeoutSec 5
+            if ($Diagnostics.ok -ne $true -or $Diagnostics.privacy.contains_source_audio -ne $false) {
+              throw "Installeret diagnostics-endpoint overholdt ikke support/privacy-kontrakten."
+            }
+            $Bundle = Join-Path $env:RUNNER_TEMP "voicerig-support.zip"
+            Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/diagnostics/bundle" -OutFile $Bundle -TimeoutSec 5
+            if (-not (Test-Path $Bundle) -or (Get-Item $Bundle).Length -lt 100) {
+              throw "Installeret VoiceRig kunne ikke generere support-bundle."
+            }
             Write-Host "Windows installed-service smoke: PASS"
           } finally {
             try {

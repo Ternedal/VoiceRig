@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from voicerig import __version__
+from voicerig.app.job_api import router as jobs_router
 from voicerig.app.netguard import allow_lan, is_loopback_client
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired, create_voice
 from voicerig.app.tts_api import router as tts_router
@@ -34,6 +35,7 @@ from voicerig.source_control import source_status
 
 app = FastAPI(title="VoiceRig", version=__version__)
 app.include_router(tts_router)
+app.include_router(jobs_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
 _IMPORT_LIMIT_BYTES = 160 * 1024 * 1024

@@ -40,3 +40,13 @@ def test_main_rig_validator_only_runs_fallback_when_explicitly_required():
     assert '"test-piper-fallback.ps1"' in text
     assert "-ModelRigWorkerUrl $ModelRigWorkerUrl" in text
     assert "piper-fallback-report.json" in text
+
+
+def test_main_rig_validator_keeps_modelrig_token_off_python_command_line():
+    text = (ROOT / "validate-rig.ps1").read_text(encoding="utf-8")
+
+    assert '"--modelrig-token"' not in text
+    assert "$PreviousModelRigToken = $env:MODELRIG_TOKEN" in text
+    assert "$env:MODELRIG_TOKEN = $ModelRigToken" in text
+    assert "Remove-Item Env:MODELRIG_TOKEN" in text
+    assert "finally {" in text

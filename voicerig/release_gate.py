@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from voicerig.media.audio import validate_wav
+from voicerig.profiles.package import validate_package
 from voicerig.source_control import source_status
 
 
@@ -41,6 +43,47 @@ def _artifact(path_value: object, label: str, blockers: list[str]) -> dict | Non
         "bytes": path.stat().st_size,
         "sha256": _sha256(path),
     }
+
+
+def _revalidate_package(artifact: dict | None, blockers: list[str]) -> dict | None:
+    if not artifact or artifact.get("exists") is not True:
+        return None
+    path = Path(str(artifact["path"]))
+    try:
+        manifest = validate_package(path)
+    except Exception as exc:  # noqa: BLE001 - release evidence must fail closed
+        blockers.append(f".mrvoice package kan ikke længere valideres: {type(exc).__name__}: {exc}")
+        return None
+    artifact["validated"] = True
+    artifact["manifest_id"] = manifest.get("id")
+    artifact["manifest_name"] = manifest.get("name")
+    return manifest
+
+
+def _revalidate_wav(
+    artifact: dict | None,
+    label: str,
+    blockers: list[str],
+    *,
+    min_duration_s: float,
+    max_duration_s: float,
+) -> dict | None:
+    if not artifact or artifact.get("exists") is not True:
+        return None
+    path = Path(str(artifact["path"]))
+    try:
+        audio = validate_wav(
+            path,
+            min_duration_s=min_duration_s,
+            max_duration_s=max_duration_s,
+            require_audible=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - release evidence must fail closed
+        blockers.append(f"{label} kan ikke længere valideres: {type(exc).__name__}: {exc}")
+        return None
+    artifact["validated"] = True
+    artifact["audio"] = audio
+    return audio
 
 
 def evaluate_release(
@@ -88,6 +131,16 @@ def evaluate_release(
     reference = _artifact(voice.get("reference"), "reference WAV", blockers)
     validation_wav = _artifact(voice.get("validation_wav"), "validation WAV", blockers)
 
+    manifest = _revalidate_package(package, blockers)
+    _revalidate_wav(reference, "reference WAV", blockers, min_duration_s=5.4, max_duration_s=11.5)
+    _revalidate_wav(validation_wav, "validation WAV", blockers, min_duration_s=0.5, max_duration_s=90.0)
+
+    if manifest is not None:
+        if voice.get("id") and manifest.get("id") != voice.get("id"):
+            blockers.append(".mrvoice manifest-id matcher ikke acceptance-rapportens voice-id.")
+        if voice.get("name") and manifest.get("name") != voice.get("name"):
+            blockers.append(".mrvoice manifest-navn matcher ikke acceptance-rapportens voice-navn.")
+
     synthesis = validation.get("synthesis") or {}
     synthesis_headers = synthesis.get("headers") or {}
     if synthesis_headers.get("device") != "cuda":
@@ -121,6 +174,13 @@ def evaluate_release(
         blockers.append("piper-fallback-report.json er ikke PASS.")
     if revision and fallback.get("checkout_revision") != revision:
         blockers.append("Piper fallback blev ikke testet på nuværende Git HEAD.")
+
+    before = fallback.get("before") or {}
+    if before.get("ok") is not True or before.get("provider") != "voicerig":
+        blockers.append("Piper fallback-testen startede ikke dokumenteret fra VoiceRig-provider.")
+    if package_name and before.get("package") != package_name:
+        blockers.append("Piper fallback-testens starttilstand brugte ikke acceptance-buildets .mrvoice-pakke.")
+
     fallback_status = fallback.get("fallback") or {}
     if fallback_status.get("ok") is not True or fallback_status.get("provider") != "piper":
         blockers.append("ModelRig skiftede ikke dokumenteret til Piper under fallback-testen.")
@@ -128,6 +188,7 @@ def evaluate_release(
     if piper.get("provider") != "piper" or piper.get("riff") is not True:
         blockers.append("Piper fallback producerede ikke en dokumenteret RIFF/WAV.")
     piper_wav = _artifact(piper.get("output"), "Piper fallback WAV", blockers)
+    _revalidate_wav(piper_wav, "Piper fallback WAV", blockers, min_duration_s=0.5, max_duration_s=90.0)
     if piper_wav and piper_wav.get("exists") and int(piper_wav.get("bytes") or 0) <= 44:
         blockers.append("Piper fallback WAV er tom eller ugyldigt kort.")
     if fallback.get("restarted") is not True:
@@ -137,6 +198,8 @@ def evaluate_release(
     restored = fallback.get("restored") or {}
     if restored.get("ok") is not True or restored.get("provider") != "voicerig":
         blockers.append("ModelRig vendte ikke dokumenteret tilbage til VoiceRig efter fallback-testen.")
+    if package_name and restored.get("package") != package_name:
+        blockers.append("Efter fallback vendte ModelRig ikke tilbage til acceptance-buildets .mrvoice-pakke.")
 
     note = quality_note.strip()
     if quality_pass is not True:
@@ -167,9 +230,12 @@ def evaluate_release(
         "gpu": gpu,
         "modelrig": modelrig,
         "fallback": {
+            "before_provider": before.get("provider"),
+            "before_package": before.get("package"),
             "provider": fallback_status.get("provider"),
             "piper_synthesis": piper,
             "restored_provider": restored.get("provider"),
+            "restored_package": restored.get("package"),
         },
         "artifacts": artifacts,
         "blockers": blockers,

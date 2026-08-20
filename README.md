@@ -125,7 +125,40 @@ $env:MODELRIG_TOKEN = "..."
 
 Her spørges den autentificerede ModelRig-backend på `http://127.0.0.1:8080/api/v1/health/full`. PASS kræver bl.a. `checks.tts.provider == "voicerig"` og at ModelRig bruger den `.mrvoice`, testen netop byggede.
 
-Den komplette procedure og Definition of Done ligger i `docs/RIG_ACCEPTANCE.md`.
+Fuld release-acceptance inklusive Piper fallback:
+
+```powershell
+.\validate-rig.ps1 `
+  -Source "C:\klip\stemme1.mp4","C:\klip\stemme2.m4a" `
+  -Name "VoiceRig Acceptance" `
+  -RequireModelRig `
+  -RequirePiperFallback
+```
+
+Efter manuel lyttekontrol afsluttes releasebeviset med:
+
+```powershell
+.\complete-acceptance.ps1 `
+  -QualityPass `
+  -QualityNote "Tydelig dansk, genkendelig stemme, ingen alvorlige artefakter"
+```
+
+Den komplette procedure og Definition of Done ligger i `docs/RIG_ACCEPTANCE.md` og `docs/RELEASE_GATE.md`.
+
+## Build og distribution
+
+VoiceRig-versionen har én kilde i `voicerig/__init__.py`. Hatch bruger samme version til wheel/sdist-metadata, og FastAPI/health rapporterer samme værdi.
+
+GitHub Actions tester både editable udviklingsinstallationen og den **faktisk distribuerbare pakke**:
+
+1. bygger wheel og sdist,
+2. installerer wheel'en i en separat venv uden for source-træet,
+3. kører `pip check`,
+4. verificerer package-versionen mod `voicerig.__version__`,
+5. verificerer at `voicerig/ui/index.html` findes i wheel'en,
+6. verificerer at `voicerig`-CLI-entrypointet er installeret.
+
+Det fanger packaging-fejl, som en editable installation ellers kan skjule.
 
 ## Status
 

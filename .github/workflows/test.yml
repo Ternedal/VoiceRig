@@ -14,6 +14,8 @@ jobs:
       - run: python -m pip install -e ".[test]"
       - run: python -m pytest -q
       - run: python -m compileall -q voicerig
+      - name: JavaScript syntax
+        run: node --check voicerig/ui/app.js
       - name: Build wheel and sdist
         run: |
           python -m pip install build
@@ -36,7 +38,10 @@ jobs:
           assert app.version == __version__
           assert health()["version"] == __version__
           assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
-          assert "VoiceRig" in UI_FILE.read_text(encoding="utf-8")
+          html = UI_FILE.read_text(encoding="utf-8")
+          assert "VoiceRig" in html
+          assert '/ui/app.js' in html and '/ui/styles.css' in html
+          assert 'id="modelrigToken"' in html
           assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")
           print("wheel metadata/assets smoke: PASS")
           PY
@@ -64,11 +69,22 @@ jobs:
           assert health and health.get("ok") is True and health.get("service") == "voicerig", "installed Linux service did not start"
           with urllib.request.urlopen(base + "/", timeout=5) as response:
               html = response.read().decode("utf-8")
-          assert "VoiceRig" in html
+          assert "VoiceRig" in html and '/ui/app.js' in html and '/ui/styles.css' in html
+          with urllib.request.urlopen(base + "/ui/app.js", timeout=5) as response:
+              javascript = response.read().decode("utf-8")
+          assert "saveModelrigToken" in javascript and "/api/modelrig/config" in javascript
+          with urllib.request.urlopen(base + "/ui/styles.css", timeout=5) as response:
+              stylesheet = response.read().decode("utf-8")
+          assert ".settings-card" in stylesheet
+          with urllib.request.urlopen(base + "/api/modelrig/config", timeout=5) as response:
+              modelrig_config = json.loads(response.read().decode("utf-8"))
+          assert set(modelrig_config) == {"ok", "token_configured"}
+          assert modelrig_config["ok"] is True
           with urllib.request.urlopen(base + "/api/diagnostics", timeout=5) as response:
               diagnostics = json.loads(response.read().decode("utf-8"))
           assert diagnostics.get("ok") is True
           assert diagnostics.get("privacy", {}).get("contains_source_audio") is False
+          assert diagnostics.get("privacy", {}).get("contains_tokens") is False
           with urllib.request.urlopen(base + "/api/diagnostics/bundle", timeout=5) as response:
               bundle = response.read()
           assert bundle.startswith(b"PK") and len(bundle) > 100
@@ -140,10 +156,26 @@ jobs:
             }
 
             $Html = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -TimeoutSec 5).Content
-            if ($Html -notmatch "VoiceRig") { throw "Installeret UI blev ikke serveret korrekt på Windows." }
+            if ($Html -notmatch "VoiceRig" -or $Html -notmatch "/ui/app.js" -or $Html -notmatch "/ui/styles.css") {
+              throw "Installeret UI-shell blev ikke serveret korrekt på Windows."
+            }
+            $JavaScript = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/ui/app.js" -TimeoutSec 5).Content
+            if ($JavaScript -notmatch "saveModelrigToken" -or $JavaScript -notmatch "/api/modelrig/config") {
+              throw "Installeret VoiceRig JavaScript-asset mangler ModelRig-konfigurationen."
+            }
+            $Styles = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/ui/styles.css" -TimeoutSec 5).Content
+            if ($Styles -notmatch "settings-card") { throw "Installeret VoiceRig stylesheet mangler settings UI." }
+
+            $ModelRigConfig = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/modelrig/config" -TimeoutSec 5
+            if ($ModelRigConfig.ok -ne $true -or $null -eq $ModelRigConfig.token_configured) {
+              throw "Installeret ModelRig config-endpoint overholdt ikke den secret-safe kontrakt."
+            }
+            if ($ModelRigConfig.PSObject.Properties.Name -contains "token") {
+              throw "ModelRig config-endpoint må aldrig returnere tokenværdien."
+            }
 
             $Diagnostics = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/diagnostics" -TimeoutSec 5
-            if ($Diagnostics.ok -ne $true -or $Diagnostics.privacy.contains_source_audio -ne $false) {
+            if ($Diagnostics.ok -ne $true -or $Diagnostics.privacy.contains_source_audio -ne $false -or $Diagnostics.privacy.contains_tokens -ne $false) {
               throw "Installeret diagnostics-endpoint overholdt ikke support/privacy-kontrakten."
             }
             $Bundle = Join-Path $env:RUNNER_TEMP "voicerig-support.zip"

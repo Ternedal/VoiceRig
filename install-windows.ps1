@@ -94,6 +94,28 @@ function Invoke-ModelWarmup([string]$Python) {
     }
 }
 
+function Restart-VoiceRigService([string]$Exe) {
+    try {
+        $Existing = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+        if ($Existing.ok -eq $true -and $Existing.service -eq "voicerig" -and $Existing.pid) {
+            Stop-Process -Id ([int]$Existing.pid) -Force -ErrorAction Stop
+            for ($i = 0; $i -lt 40; $i++) {
+                Start-Sleep -Milliseconds 250
+                try {
+                    $Probe = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
+                    if (-not $Probe) { break }
+                } catch {
+                    break
+                }
+            }
+        }
+    } catch {
+        # No running VoiceRig service is fine; start a fresh one below. Do not
+        # stop arbitrary processes merely because port 8765 is occupied.
+    }
+    Start-Process -FilePath $Exe -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
+}
+
 Write-Host "VoiceRig V1 — Windows installation"
 Write-Host "Kontrollerer nødvendige systemkomponenter..."
 
@@ -121,7 +143,9 @@ Write-Host "Systemafhængigheder er klar. Installerer VoiceRig-runtime..."
 if ($LASTEXITCODE -ne 0) { throw "VoiceRig runtime-setup fejlede." }
 
 $MainPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$VoiceRigExe = Join-Path $PSScriptRoot ".venv\Scripts\voicerig.exe"
 if (-not (Test-Path -LiteralPath $MainPy)) { throw "VoiceRig Python-runtime mangler efter setup." }
+if (-not (Test-Path -LiteralPath $VoiceRigExe)) { throw "VoiceRig service-entrypoint mangler efter setup." }
 
 if (-not $SkipModelWarmup) {
     Write-Host ""
@@ -148,6 +172,11 @@ if (-not $SkipModelWarmup) {
             throw "Model-warmup fejlede stadig efter HF-token blev gemt. Kontrollér at community-1-vilkårene er accepteret, og at tokenet har read-adgang."
         }
     }
+
+    # setup-windows starts the service before this user-facing warmup. Restart
+    # after warmup so a newly persisted HF_TOKEN and the verified readiness
+    # marker are observed by the long-lived process and all child workers.
+    Restart-VoiceRigService $VoiceRigExe
 } else {
     Write-Warning "Model-warmup er sprunget over. Voice creation forbliver låst, indtil modellerne er verificeret."
 }

@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+_LEGACY_DATA_DIR_ENV_VALUES = {"voicerig-data", "./voicerig-data"}
 
 
 def load_local_env(path: Path | None = None) -> bool:
@@ -43,9 +44,21 @@ def _legacy_repo_data_dir() -> Path:
     return (_REPO_ROOT / "voicerig-data").resolve()
 
 
+def _is_legacy_data_dir_setting(value: str) -> bool:
+    """Recognize the old repo-relative default without swallowing custom paths.
+
+    Early VoiceRig .env files shipped with ``VOICERIG_DATA_DIR=voicerig-data``.
+    Treating that value as an explicit override defeats the newer stable
+    per-user storage location, so upgrades must interpret only those exact
+    historical relative spellings as the legacy default.
+    """
+    normalized = value.strip().replace("\\", "/").rstrip("/")
+    return normalized in _LEGACY_DATA_DIR_ENV_VALUES
+
+
 def data_dir() -> Path:
     explicit = os.getenv("VOICERIG_DATA_DIR", "").strip()
-    if explicit:
+    if explicit and not _is_legacy_data_dir_setting(explicit):
         root = Path(explicit).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         return root

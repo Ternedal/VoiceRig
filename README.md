@@ -21,6 +21,7 @@ V1 indeholder hele den daglige produktvej:
 - persistente voice-build jobs med progress, cancel og resume efter browser-refresh,
 - lokal TTS-sidecar til ModelRig,
 - Piper fallback i ModelRig,
+- secret-safe ModelRig-tokenkonfiguration direkte fra System-fanen,
 - diagnostics og support-ZIP uden kildeaudio, profiler eller tokens,
 - stabil per-user storage, retention og cleanup,
 - Windows install/update/rollback/uninstall,
@@ -95,7 +96,7 @@ UI kører på `http://127.0.0.1:8765` og er loopback-only som standard.
 
 I **Mine stemmer** kan profiler previewes, importeres, eksporteres, aktiveres i ModelRig, slettes og testes med egen tekst.
 
-I **System** vises runtime/GPU/model/ModelRig-status, repair-flow samt download af privacy-redigeret supportpakke.
+I **System** vises runtime/GPU/model/ModelRig-status, repair-flow, secret-safe ModelRig device-token-konfiguration samt download af privacy-redigeret supportpakke. Tokenværdien returneres aldrig fra VoiceRigs config-API; UI'et kan kun se, om et token er konfigureret.
 
 ## `.mrvoice`
 
@@ -119,6 +120,8 @@ På samme maskine installeres `.mrvoice` atomisk i ModelRigs voice-mappe og kan 
 
 ModelRig beholder Piper som fallback, når VoiceRig ikke er tilgængelig i `auto`-provider-flowet.
 
+Hvis ModelRigs backend kræver et parret device-token, kan det gemmes fra **System → ModelRig authentication**. Tokenet skrives lokalt til VoiceRigs `.env`, slår igennem i den kørende proces med det samme og sendes aldrig tilbage til browseren efter gem.
+
 ## Update og recovery
 
 Opdatér en eksisterende checkout med:
@@ -135,11 +138,19 @@ Afinstallation:
 .\uninstall-windows.ps1
 ```
 
-Brugerdata og profiler bevares som udgangspunkt. Slet dem kun eksplicit:
+Brugerdata og profiler bevares som udgangspunkt. Lokale `HF_TOKEN`/`MODELRIG_TOKEN`-værdier ryddes fra VoiceRigs `.env` som sikker standard. Hvis de bevidst skal bevares til en senere geninstallation:
+
+```powershell
+.\uninstall-windows.ps1 -KeepSecrets
+```
+
+Slet også brugerdata og profiler eksplicit med:
 
 ```powershell
 .\uninstall-windows.ps1 -RemoveData
 ```
+
+`-RemoveData` spørger VoiceRigs egen config om den autoritative datamappe **før** runtime fjernes, så også en brugerdefineret `VOICERIG_DATA_DIR` i `.env` rammes korrekt.
 
 ## Fysisk rig-validering
 
@@ -186,11 +197,12 @@ VoiceRig-versionen har én kilde i `voicerig/__init__.py`. CI:
 
 1. kører unit/regression-tests,
 2. compile-checker Python,
-3. bygger wheel og sdist,
-4. installerer wheel i en frisk runtime uden for source-træet,
-5. starter den installerede VoiceRig-service på Linux og tester den over rigtig localhost HTTP,
-6. bygger og installerer samme produktvej på Windows og tester service/UI/diagnostics over localhost HTTP,
-7. parser alle PowerShell-scripts.
+3. syntax-checker browser-JavaScript med Node,
+4. bygger wheel og sdist,
+5. installerer wheel i en frisk runtime uden for source-træet,
+6. starter den installerede VoiceRig-service på Linux og tester UI-assets/config/diagnostics over rigtig localhost HTTP,
+7. bygger og installerer samme produktvej på Windows og tester service/UI/assets/diagnostics over localhost HTTP,
+8. parser alle PowerShell-scripts.
 
 Den aktuelle grønne PR-head og CI-run registreres i PR #1, ikke som et hårdkodet SHA i README.
 

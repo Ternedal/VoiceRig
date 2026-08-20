@@ -14,6 +14,28 @@ jobs:
       - run: python -m pip install -e ".[test]"
       - run: python -m pytest -q
       - run: python -m compileall -q voicerig
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install build
+          python -m build
+          test -n "$(find dist -maxdepth 1 -name 'voicerig-*.whl' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name 'voicerig-*.tar.gz' -print -quit)"
+      - name: Smoke-test installed wheel outside source tree
+        run: |
+          python -m venv /tmp/voicerig-wheel
+          /tmp/voicerig-wheel/bin/python -m pip install dist/voicerig-*.whl
+          cd /tmp
+          /tmp/voicerig-wheel/bin/python - <<'PY'
+          import importlib.metadata
+          import shutil
+          from voicerig.app.main import UI_FILE
+
+          assert importlib.metadata.version("voicerig") == "0.1.0"
+          assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
+          assert "VoiceRig" in UI_FILE.read_text(encoding="utf-8")
+          assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")
+          print("wheel install smoke: PASS")
+          PY
       - name: PowerShell syntax
         shell: pwsh
         run: |

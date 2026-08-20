@@ -35,9 +35,6 @@ $ArgsList = @(
     "--output-dir", (Join-Path $PSScriptRoot "validation-output")
 )
 
-if ($ModelRigToken) {
-    $ArgsList += @("--modelrig-token", $ModelRigToken)
-}
 foreach ($Item in $Source) {
     $Resolved = Resolve-Path -LiteralPath $Item -ErrorAction Stop
     $ArgsList += @("--source", $Resolved.Path)
@@ -64,8 +61,27 @@ if ($Source.Count -eq 0) {
 }
 Write-Host ""
 
-& $Python @ArgsList
-$Code = $LASTEXITCODE
+# Keep credentials out of the Python process command line. The validator already
+# reads MODELRIG_TOKEN from its inherited environment, so temporarily expose the
+# explicit PowerShell parameter there and restore the caller's environment even
+# when validation fails.
+$PreviousModelRigToken = $env:MODELRIG_TOKEN
+try {
+    if ($ModelRigToken) {
+        $env:MODELRIG_TOKEN = $ModelRigToken
+    } else {
+        Remove-Item Env:MODELRIG_TOKEN -ErrorAction SilentlyContinue
+    }
+
+    & $Python @ArgsList
+    $Code = $LASTEXITCODE
+} finally {
+    if ($null -eq $PreviousModelRigToken) {
+        Remove-Item Env:MODELRIG_TOKEN -ErrorAction SilentlyContinue
+    } else {
+        $env:MODELRIG_TOKEN = $PreviousModelRigToken
+    }
+}
 
 if ($Code -eq 0 -and $RequirePiperFallback) {
     Write-Host ""

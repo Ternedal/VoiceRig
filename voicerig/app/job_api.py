@@ -5,28 +5,27 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
+from voicerig.app.job_retention import prune_job_history
 from voicerig.app.jobs import job_manager
-from voicerig.app.ops_api import router as operations_router
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS
 from voicerig.config import max_upload_mb
 
-# Root router keeps the public job paths stable while allowing the operations
-# router to be mounted alongside them through main.py's existing include.
-router = APIRouter()
-router.include_router(operations_router)
+router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
 @router.on_event("startup")
 def _recover_interrupted_jobs() -> None:
     job_manager.recover()
+    prune_job_history()
 
 
-@router.get("/api/jobs", tags=["jobs"])
+@router.get("")
 def recent_jobs(limit: int = 20) -> dict:
+    prune_job_history()
     return {"ok": True, "jobs": job_manager.recent(limit=limit)}
 
 
-@router.post("/api/jobs/voices", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
+@router.post("/voices", status_code=status.HTTP_202_ACCEPTED)
 def start_voice_job(
     name: str = Form(...),
     language: str = Form("da"),
@@ -38,6 +37,7 @@ def start_voice_job(
     if not name.strip():
         raise HTTPException(status_code=422, detail="Stemmen skal have et navn.")
 
+    prune_job_history()
     limit = max_upload_mb() * 1024 * 1024
     with tempfile.TemporaryDirectory(prefix="voicerig-job-upload-") as tmp:
         staged: list[tuple[str, Path]] = []
@@ -65,7 +65,7 @@ def start_voice_job(
     return {"ok": True, "job": job}
 
 
-@router.get("/api/jobs/{job_id}", tags=["jobs"])
+@router.get("/{job_id}")
 def get_job(job_id: str) -> dict:
     try:
         return {"ok": True, "job": job_manager.get(job_id)}
@@ -75,7 +75,7 @@ def get_job(job_id: str) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/api/jobs/{job_id}/speaker", tags=["jobs"])
+@router.post("/{job_id}/speaker")
 def choose_job_speaker(job_id: str, anchor: str = Form(...)) -> dict:
     if len(anchor) > 64 or ":" not in anchor:
         raise HTTPException(status_code=400, detail="Ugyldigt speaker-anker.")
@@ -87,7 +87,7 @@ def choose_job_speaker(job_id: str, anchor: str = Form(...)) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/api/jobs/{job_id}/cancel", tags=["jobs"])
+@router.post("/{job_id}/cancel")
 def cancel_job(job_id: str) -> dict:
     try:
         return {"ok": True, "job": job_manager.cancel(job_id)}

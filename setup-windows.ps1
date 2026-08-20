@@ -35,6 +35,37 @@ function Get-ProcessExecutablePath($Process) {
     return $null
 }
 
+function Get-LocalVoiceRigLauncherPid($Process, [string]$ExpectedFull) {
+    $ProcessPath = Get-ProcessExecutablePath $Process
+    if (-not [string]::IsNullOrWhiteSpace($ProcessPath) -and [string]::Equals(
+        [System.IO.Path]::GetFullPath($ProcessPath),
+        $ExpectedFull,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        return [int]$Process.Id
+    }
+
+    # pip/distlib console-script launchers can keep voicerig.exe as a parent
+    # while the Python child owns the HTTP server and therefore reports the
+    # health PID. Accept that exact one-hop parent relationship only.
+    try {
+        $Cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction Stop
+        if (-not $Cim -or -not $Cim.ParentProcessId) { return $null }
+        $Parent = Get-Process -Id ([int]$Cim.ParentProcessId) -ErrorAction Stop
+        $ParentPath = Get-ProcessExecutablePath $Parent
+        if (-not [string]::IsNullOrWhiteSpace($ParentPath) -and [string]::Equals(
+            [System.IO.Path]::GetFullPath($ParentPath),
+            $ExpectedFull,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            return [int]$Parent.Id
+        }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
 function Stop-LocalVoiceRigForRuntimeMutation([string]$ExpectedExe) {
     $ExpectedFull = [System.IO.Path]::GetFullPath($ExpectedExe)
     $StoppedIds = @{}
@@ -52,18 +83,20 @@ function Stop-LocalVoiceRigForRuntimeMutation([string]$ExpectedExe) {
         }
         $HealthPid = [int]$Health.pid
         $HealthProcess = Get-Process -Id $HealthPid -ErrorAction Stop
-        $HealthPath = Get-ProcessExecutablePath $HealthProcess
-        if ([string]::IsNullOrWhiteSpace($HealthPath) -or -not [string]::Equals(
-            [System.IO.Path]::GetFullPath($HealthPath),
-            $ExpectedFull,
-            [System.StringComparison]::OrdinalIgnoreCase
-        )) {
+        $LauncherPid = Get-LocalVoiceRigLauncherPid $HealthProcess $ExpectedFull
+        if (-not $LauncherPid) {
             throw "En VoiceRig-service svarer på port 8765, men den kører ikke fra denne checkout. Runtime-installationen stopper uden at røre processen."
         }
 
-        Write-Host "Stopper eksisterende lokal VoiceRig-proces PID $HealthPid før runtime-opdatering..."
-        Stop-Process -Id $HealthPid -Force -ErrorAction Stop
-        $StoppedIds[$HealthPid] = $true
+        Write-Host "Stopper eksisterende lokal VoiceRig-service PID $HealthPid (launcher PID $LauncherPid) før runtime-opdatering..."
+        if ($HealthPid -ne $LauncherPid) {
+            Stop-Process -Id $HealthPid -Force -ErrorAction Stop
+            $StoppedIds[$HealthPid] = $true
+        }
+        if (Get-Process -Id $LauncherPid -ErrorAction SilentlyContinue) {
+            Stop-Process -Id $LauncherPid -Force -ErrorAction Stop
+            $StoppedIds[$LauncherPid] = $true
+        }
     }
 
     # A previous failed install can leave the local launcher alive even if the

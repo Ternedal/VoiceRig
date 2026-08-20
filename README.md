@@ -162,4 +162,4 @@ Det fanger packaging-fejl, som en editable installation ellers kan skjule.
 
 ## Status
 
-Softwarekontrakterne er CI-dækkede. PR #1 forbliver draft, indtil den fysiske acceptance på RTX 3060 12 GB har bevist rigtig modeldownload, diarization, voice-build, server-processens peak VRAM, manuel stemmelighed/lydkvalitet, ModelRig-provider og Piper fallback.
+Softwarekontrakterne er CI-dækkede. Den **aktuelle grønne PR-head og CI-run registreres i PR #1**, ikke i versionsstyrede filer. PR #1 forbliver draft, indtil den fysiske acceptance på RTX 3060 12 GB har bevist rigtig modeldownload, diarization, voice-build, server-processens peak VRAM, manuel stemmelighed/lydkvalitet, ModelRig-provider og Piper fallback.

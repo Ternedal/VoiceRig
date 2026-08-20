@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
+from voicerig import __version__
 from voicerig.app.netguard import allow_lan, is_loopback_client
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired, create_voice
 from voicerig.app.tts_api import router as tts_router
@@ -18,7 +19,7 @@ from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats, reset_cuda_peaks, voice_build_readiness
 from voicerig.source_control import source_status
 
-app = FastAPI(title="VoiceRig", version="0.1.0")
+app = FastAPI(title="VoiceRig", version=__version__)
 app.include_router(tts_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
@@ -58,7 +59,7 @@ def health() -> dict:
     return {
         "ok": True,
         "service": "voicerig",
-        "version": "0.1.0",
+        "version": __version__,
         "pid": os.getpid(),
         "source": source_status(),
         "hardware": readiness["hardware"],

@@ -6,6 +6,16 @@ Denne gate køres **kun efter** den fulde fysiske rig-acceptance i
 Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 `.mrvoice` eller WAV-filer til GitHub.
 
+## Aktuel software-releasekandidat
+
+- Git HEAD: `ed378c6db0a1a22b390df166d54f839c480dcc55`
+- GitHub Actions: run #381 — PASS
+- Gaten omfatter pytest, `compileall`, PowerShell-syntax, wheel+sdist-build,
+  isoleret wheel-installation, `pip check`, versionskontrakt, UI-asset og
+  `voicerig`-entrypoint.
+
+Hvis head ændres, er denne kandidat stale og samme CI-gate skal være grøn igen.
+
 ## 1. Kør hele den automatiske fysiske test
 
 På RTX 3060-riggen, fra et clean checkout af den PR-head der skal releases:

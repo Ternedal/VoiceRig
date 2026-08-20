@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
 from voicerig import __version__
 from voicerig.app.jobs import job_manager
@@ -14,6 +16,7 @@ from voicerig.runtime import voice_build_readiness
 from voicerig.source_control import source_status
 
 router = APIRouter(tags=["operations"])
+_UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 
 
 @router.on_event("startup")
@@ -90,6 +93,16 @@ def diagnostics_snapshot() -> dict:
             "contains_original_input_filenames": False,
         },
     }
+
+
+@router.get("/ui/app.js", include_in_schema=False)
+def ui_app_js():
+    return FileResponse(_UI_DIR / "app.js", media_type="text/javascript")
+
+
+@router.get("/ui/styles.css", include_in_schema=False)
+def ui_styles_css():
+    return FileResponse(_UI_DIR / "styles.css", media_type="text/css")
 
 
 @router.get("/api/diagnostics")

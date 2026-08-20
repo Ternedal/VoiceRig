@@ -4,6 +4,7 @@ import base64
 import math
 import shutil
 import tempfile
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ SUPPORTED_EXTENSIONS = {
 }
 
 ProgressCallback = Callable[[str, int, str], None]
+_BUILD_GATE = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -41,15 +43,32 @@ class BuildResult:
     diarization_used: bool
 
 
+class VoiceBuildBusy(RuntimeError):
+    pass
+
+
 class SpeakerSelectionRequired(ValueError):
     def __init__(self, choices: list[dict]):
         super().__init__("Vi fandt flere tydelige stemmer. Vælg den, du vil bruge.")
         self.choices = choices
 
 
+def build_gate_status() -> dict:
+    return {"busy": _BUILD_GATE.locked()}
+
+
 def _progress(callback: ProgressCallback | None, stage: str, percent: int, message: str) -> None:
     if callback is not None:
         callback(stage, max(0, min(100, int(percent))), message)
+
+
+def _acquire_build_gate(progress: ProgressCallback | None, wait: bool) -> None:
+    if not wait:
+        if not _BUILD_GATE.acquire(blocking=False):
+            raise VoiceBuildBusy("VoiceRig arbejder allerede på en stemme.")
+        return
+    while not _BUILD_GATE.acquire(timeout=0.25):
+        _progress(progress, "queued", 0, "Venter på VoiceRig build-køen…")
 
 
 def _preview_parts(segments, target_s: float = 4.0) -> list[tuple[float, float]]:
@@ -149,23 +168,15 @@ def _materialize_reference(candidate: ReferenceCandidate, target: Path) -> Path:
     return target
 
 
-def create_voice(
+def _create_voice_impl(
     name: str,
     sources: list[Path],
     output_dir: Path,
-    language: str = "da",
-    speaker_choice: int | None = None,
-    speaker_anchor: str | None = None,
-    progress: ProgressCallback | None = None,
+    language: str,
+    speaker_choice: int | None,
+    speaker_anchor: str | None,
+    progress: ProgressCallback | None,
 ) -> BuildResult:
-    if not name.strip():
-        raise ValueError("Stemmen skal have et navn.")
-    if not sources:
-        raise ValueError("Tilføj mindst én lyd- eller videofil.")
-    bad = [p.name for p in sources if p.suffix.lower() not in SUPPORTED_EXTENSIONS]
-    if bad:
-        raise ValueError(f"Ikke-understøttet filtype: {', '.join(bad)}")
-
     _progress(progress, "starting", 1, "Forbereder voice-build…")
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="voicerig-") as tmp:
@@ -173,12 +184,7 @@ def create_voice(
         wavs: list[Path] = []
         total_sources = len(sources)
         for idx, source in enumerate(sources):
-            _progress(
-                progress,
-                "decoding",
-                5 + int((idx / max(1, total_sources)) * 15),
-                f"Normaliserer klip {idx + 1} af {total_sources}…",
-            )
+            _progress(progress, "decoding", 5 + int((idx / max(1, total_sources)) * 15), f"Normaliserer klip {idx + 1} af {total_sources}…")
             wav = work / f"source_{idx:02d}.wav"
             extract_mono_wav(source, wav)
             wavs.append(wav)
@@ -196,31 +202,22 @@ def create_voice(
                     chosen = _cluster_from_anchor(wavs, results, clusters, speaker_anchor)
                     diarizations = segments_for_cluster(results, chosen)
                 else:
-                    diarizations = primary_speaker_segments(
-                        results,
-                        speaker_choice=speaker_choice,
-                    )
+                    diarizations = primary_speaker_segments(results, speaker_choice=speaker_choice)
             except AmbiguousSpeakers as exc:
                 choices = _speaker_choices(work, wavs, results, clusters)
                 if len(choices) >= 2:
                     _progress(progress, "speaker_selection", 40, "Venter på valg mellem flere tydelige speakers.")
                     raise SpeakerSelectionRequired(choices) from exc
-                raise ValueError(
-                    "Vi fandt flere stemmer, men kunne ikke lave tydelige stemmeprøver. "
-                    "Tilføj et klip med lidt mere ren tale."
-                ) from exc
+                raise ValueError("Vi fandt flere stemmer, men kunne ikke lave tydelige stemmeprøver. Tilføj et klip med lidt mere ren tale.") from exc
             used = bool(diarizations)
             if not used and not allow_undiarized_fallback():
-                raise DiarizationUnavailable(
-                    "Speaker-analysen fandt ingen brugbar stemmeidentitet i materialet."
-                )
+                raise DiarizationUnavailable("Speaker-analysen fandt ingen brugbar stemmeidentitet i materialet.")
         except SpeakerSelectionRequired:
             raise
         except DiarizationUnavailable as exc:
             if not allow_undiarized_fallback():
                 raise RuntimeError(
-                    "VoiceRig kunne ikke udføre sikker speaker-analyse. "
-                    "Kontrollér HF_TOKEN, community-1-modeladgang og den separate "
+                    "VoiceRig kunne ikke udføre sikker speaker-analyse. Kontrollér HF_TOKEN, community-1-modeladgang og den separate "
                     f"diarization-runtime. Detalje: {exc}"
                 ) from exc
             diarizations = {}
@@ -242,17 +239,34 @@ def create_voice(
 
         _progress(progress, "packaging", 90, "Pakker og validerer .mrvoice…")
         package = output_dir / f"{slugify(name)}.mrvoice"
-        build_package(
-            name,
-            language,
-            reference,
-            conditioning,
-            preview,
-            package,
-            alternatives=alternatives,
-        )
+        build_package(name, language, reference, conditioning, preview, package, alternatives=alternatives)
 
         saved_reference = output_dir / f"{slugify(name)}-reference.wav"
         shutil.copy2(reference, saved_reference)
         _progress(progress, "complete", 100, "Stemmen er bygget og valideret.")
         return BuildResult(package=package, reference=saved_reference, diarization_used=used)
+
+
+def create_voice(
+    name: str,
+    sources: list[Path],
+    output_dir: Path,
+    language: str = "da",
+    speaker_choice: int | None = None,
+    speaker_anchor: str | None = None,
+    progress: ProgressCallback | None = None,
+    wait_for_build_slot: bool = True,
+) -> BuildResult:
+    if not name.strip():
+        raise ValueError("Stemmen skal have et navn.")
+    if not sources:
+        raise ValueError("Tilføj mindst én lyd- eller videofil.")
+    bad = [p.name for p in sources if p.suffix.lower() not in SUPPORTED_EXTENSIONS]
+    if bad:
+        raise ValueError(f"Ikke-understøttet filtype: {', '.join(bad)}")
+
+    _acquire_build_gate(progress, wait_for_build_slot)
+    try:
+        return _create_voice_impl(name, sources, output_dir, language, speaker_choice, speaker_anchor, progress)
+    finally:
+        _BUILD_GATE.release()

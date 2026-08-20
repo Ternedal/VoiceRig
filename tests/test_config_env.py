@@ -43,3 +43,21 @@ def test_legacy_repo_data_is_migrated_to_stable_default(tmp_path: Path, monkeypa
     assert resolved == stable.resolve()
     assert (stable / "model-readiness.json").read_text(encoding="utf-8") == "ready"
     assert not legacy.exists()
+
+
+def test_legacy_env_default_is_migrated_instead_of_overriding_stable_storage(
+    tmp_path: Path, monkeypatch
+):
+    legacy = tmp_path / "legacy"
+    stable = tmp_path / "stable"
+    legacy.mkdir()
+    (legacy / "jobs.json").write_text("legacy-job", encoding="utf-8")
+    monkeypatch.setenv("VOICERIG_DATA_DIR", ".\\voicerig-data")
+    monkeypatch.setattr(config, "_legacy_repo_data_dir", lambda: legacy)
+    monkeypatch.setattr(config, "_default_data_dir", lambda: stable)
+
+    resolved = config.data_dir()
+
+    assert resolved == stable.resolve()
+    assert (stable / "jobs.json").read_text(encoding="utf-8") == "legacy-job"
+    assert not legacy.exists()

@@ -63,23 +63,18 @@ Scriptet læser de to maskinrapporter igen og afviser blandt andet:
 - acceptance kørt på en anden revision,
 - VoiceRig-service fra en anden/dirty revision,
 - manglende eller flyttede artifacts,
-- `.mrvoice` som ikke længere består package/checksum-valideringen,
-- reference-, VoiceRig- eller Piper-WAV som ikke længere består den samme
-  format/varighed/hørbarhedsvalidering som under maskin-PASS,
 - manglende diarization,
 - TTS som ikke brugte CUDA eller den forventede `.mrvoice`,
 - manglende peak-VRAM-data,
 - ModelRig som ikke bruger VoiceRig/korrekt package,
-- fallback-test hvis `before` ikke brugte den samme `.mrvoice` som den fysiske
-  E2E byggede,
 - Piper fallback uden rigtig RIFF/WAV,
-- VoiceRig som ikke blev genetableret på **samme `.mrvoice`** efter
-  fallback-testen,
+- fallback/restore som ikke bruger samme `.mrvoice` som den fysiske E2E,
+- VoiceRig som ikke blev genetableret efter fallback-testen,
 - manglende manuel kvalitetsgodkendelse.
 
-Release-gaten genvaliderer altså de konkrete artifacts **efter** lyttekontrollen.
-En fil kan derfor ikke ændres mellem maskin-PASS og release-verdict og stadig
-arve det gamle PASS.
+Slutgaten genvaliderer `.mrvoice` samt reference-, VoiceRig- og Piper-WAV igen
+efter lyttekontrollen. Dermed kan ændrede eller beskadigede lokale artifacts ikke
+bestå på et tidligere maskin-PASS.
 
 Ved PASS oprettes:
 
@@ -87,18 +82,32 @@ Ved PASS oprettes:
 release-acceptance.json
 ```
 
-Rapporten indeholder SHA-256 for de konkrete acceptance-artifacts samt resultatet
-af den sidste genvalidering, så den manuelle lydvurdering kan bindes til præcis
-de filer, som maskinrapporterne beskriver. Selve lydfilerne og `.mrvoice`
-forbliver lokale og er Git-ignorerede.
+Rapporten indeholder SHA-256 for de konkrete acceptance-artifacts, så den
+manuelle lydvurdering kan bindes til præcis de filer, som maskinrapporterne
+beskriver. Selve lydfilerne og `.mrvoice` forbliver lokale og er Git-ignorerede.
 
-## 4. Merge-regel
+## 4. Software/distribution gate
+
+GitHub Actions på **samme PR-head** skal være grøn. Den autoritative CI-gate
+omfatter ikke kun editable tests, men også den pakke der faktisk kan distribueres:
+
+1. pytest + `compileall`,
+2. PowerShell-syntax,
+3. build af wheel og sdist,
+4. installation af wheel i separat venv uden for source-træet,
+5. `pip check`,
+6. versionskontrakt mellem package metadata, `voicerig.__version__`, FastAPI og health,
+7. verificering af at UI-asset og `voicerig`-entrypoint findes i wheel'en.
+
+Et grønt editable checkout er derfor ikke nok til release.
+
+## 5. Merge-regel
 
 PR #1 kan først gøres ready/merge, når:
 
 1. `release-acceptance.json` siger `ok: true`,
 2. `source.revision` er identisk med PR-head,
-3. GitHub Actions er grøn på **samme PR-head**,
+3. GitHub Actions er grøn på **samme PR-head**, inklusive wheel/sdist-gaten,
 4. der ikke er nye review-blockers.
 
 Hvis koden ændres efter den fysiske acceptance, er releasebeviset stale. Kør den

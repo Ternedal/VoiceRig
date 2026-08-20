@@ -4,6 +4,7 @@ import base64
 import math
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +31,8 @@ SUPPORTED_EXTENSIONS = {
     ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma",
 }
 
+ProgressCallback = Callable[[str, int, str], None]
+
 
 @dataclass(frozen=True)
 class BuildResult:
@@ -42,6 +45,11 @@ class SpeakerSelectionRequired(ValueError):
     def __init__(self, choices: list[dict]):
         super().__init__("Vi fandt flere tydelige stemmer. Vælg den, du vil bruge.")
         self.choices = choices
+
+
+def _progress(callback: ProgressCallback | None, stage: str, percent: int, message: str) -> None:
+    if callback is not None:
+        callback(stage, max(0, min(100, int(percent))), message)
 
 
 def _preview_parts(segments, target_s: float = 4.0) -> list[tuple[float, float]]:
@@ -148,6 +156,7 @@ def create_voice(
     language: str = "da",
     speaker_choice: int | None = None,
     speaker_anchor: str | None = None,
+    progress: ProgressCallback | None = None,
 ) -> BuildResult:
     if not name.strip():
         raise ValueError("Stemmen skal have et navn.")
@@ -157,22 +166,33 @@ def create_voice(
     if bad:
         raise ValueError(f"Ikke-understøttet filtype: {', '.join(bad)}")
 
+    _progress(progress, "starting", 1, "Forbereder voice-build…")
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="voicerig-") as tmp:
         work = Path(tmp)
         wavs: list[Path] = []
+        total_sources = len(sources)
         for idx, source in enumerate(sources):
+            _progress(
+                progress,
+                "decoding",
+                5 + int((idx / max(1, total_sources)) * 15),
+                f"Normaliserer klip {idx + 1} af {total_sources}…",
+            )
             wav = work / f"source_{idx:02d}.wav"
             extract_mono_wav(source, wav)
             wavs.append(wav)
+        _progress(progress, "decoding", 20, "Lyd og video er normaliseret.")
 
         diarizations = {}
         used = False
         try:
+            _progress(progress, "diarization", 26, "Finder og matcher speakers…")
             results = diarize_many(wavs)
             clusters = speaker_clusters(results)
             try:
                 if speaker_anchor:
+                    _progress(progress, "speaker_selection", 42, "Genfinder den valgte speaker…")
                     chosen = _cluster_from_anchor(wavs, results, clusters, speaker_anchor)
                     diarizations = segments_for_cluster(results, chosen)
                 else:
@@ -183,6 +203,7 @@ def create_voice(
             except AmbiguousSpeakers as exc:
                 choices = _speaker_choices(work, wavs, results, clusters)
                 if len(choices) >= 2:
+                    _progress(progress, "speaker_selection", 40, "Venter på valg mellem flere tydelige speakers.")
                     raise SpeakerSelectionRequired(choices) from exc
                 raise ValueError(
                     "Vi fandt flere stemmer, men kunne ikke lave tydelige stemmeprøver. "
@@ -203,6 +224,7 @@ def create_voice(
                     f"diarization-runtime. Detalje: {exc}"
                 ) from exc
             diarizations = {}
+        _progress(progress, "reference", 50, "Vælger de bedste rene talestykker…")
 
         ranked = rank_references(wavs, diarizations, limit=4)
         reference = _materialize_reference(ranked[0], work / "reference.wav")
@@ -211,12 +233,14 @@ def create_voice(
             target = work / f"reference-alt-{idx:02d}.wav"
             alternatives.append(_materialize_reference(candidate, target))
 
+        _progress(progress, "conditioning", 65, "Bygger stemmens Chatterbox-conditioning og preview…")
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
         engine.build_artifacts(reference, conditioning, preview)
         validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
+        _progress(progress, "packaging", 90, "Pakker og validerer .mrvoice…")
         package = output_dir / f"{slugify(name)}.mrvoice"
         build_package(
             name,
@@ -230,4 +254,5 @@ def create_voice(
 
         saved_reference = output_dir / f"{slugify(name)}-reference.wav"
         shutil.copy2(reference, saved_reference)
+        _progress(progress, "complete", 100, "Stemmen er bygget og valideret.")
         return BuildResult(package=package, reference=saved_reference, diarization_used=used)

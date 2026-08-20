@@ -95,24 +95,34 @@ function Invoke-ModelWarmup([string]$Python) {
 }
 
 function Restart-VoiceRigService([string]$Exe) {
+    $Existing = $null
     try {
         $Existing = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
-        if ($Existing.ok -eq $true -and $Existing.service -eq "voicerig" -and $Existing.pid) {
-            Stop-Process -Id ([int]$Existing.pid) -Force -ErrorAction Stop
-            for ($i = 0; $i -lt 40; $i++) {
-                Start-Sleep -Milliseconds 250
-                try {
-                    $Probe = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
-                    if (-not $Probe) { break }
-                } catch {
-                    break
-                }
+    } catch {
+        $Existing = $null
+    }
+
+    if ($Existing) {
+        if ($Existing.ok -ne $true -or $Existing.service -ne "voicerig" -or -not $Existing.pid) {
+            throw "Port 8765 svarer, men processen identificerer sig ikke sikkert som VoiceRig. Installationen stopper uden at røre processen."
+        }
+        Stop-Process -Id ([int]$Existing.pid) -Force -ErrorAction Stop
+        $Stopped = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Milliseconds 250
+            try {
+                $Probe = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
+                if (-not $Probe) { $Stopped = $true; break }
+            } catch {
+                $Stopped = $true
+                break
             }
         }
-    } catch {
-        # No running VoiceRig service is fine; start a fresh one below. Do not
-        # stop arbitrary processes merely because port 8765 is occupied.
+        if (-not $Stopped) {
+            throw "Den eksisterende VoiceRig-service stoppede ikke rent; starter ikke en ekstra proces."
+        }
     }
+
     Start-Process -FilePath $Exe -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
 }
 

@@ -5,6 +5,7 @@ from fastapi.responses import Response
 
 from voicerig import __version__
 from voicerig.app.jobs import job_manager
+from voicerig.app.pipeline import build_gate_status
 from voicerig.config import modelrig_base_url, modelrig_token
 from voicerig.diagnostics import build_support_bundle, configure_logging
 from voicerig.modelrig.client import status as modelrig_status
@@ -72,6 +73,7 @@ def diagnostics_snapshot() -> dict:
         "version": __version__,
         "source": source_status(),
         "readiness": voice_build_readiness(),
+        "build": build_gate_status(),
         "modelrig": modelrig_status(modelrig_base_url(), token=modelrig_token()),
         "library": {
             "voice_count": len(voices),

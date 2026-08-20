@@ -48,3 +48,75 @@ jobs:
             [void][scriptblock]::Create((Get-Content -LiteralPath $_.FullName -Raw))
             Write-Host "parsed $($_.Name)"
           }
+
+  windows-service-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build Windows-test wheel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install build
+          python -m build --wheel
+      - name: Install wheel in isolated Windows venv
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-wheel-win"
+          python -m venv $Venv
+          $Python = Join-Path $Venv "Scripts\python.exe"
+          $Wheel = (Get-ChildItem -Path dist -Filter "voicerig-*.whl" | Select-Object -First 1).FullName
+          if (-not $Wheel) { throw "VoiceRig wheel blev ikke bygget." }
+          & $Python -m pip install $Wheel
+          if ($LASTEXITCODE -ne 0) { throw "Windows wheel-installation fejlede." }
+          & $Python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check fejlede i Windows wheel-miljøet." }
+      - name: Start installed VoiceRig and probe localhost HTTP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-wheel-win"
+          $VoiceRig = Join-Path $Venv "Scripts\voicerig.exe"
+          if (-not (Test-Path -LiteralPath $VoiceRig)) { throw "voicerig.exe mangler i installeret wheel." }
+
+          $env:VOICERIG_DATA_DIR = Join-Path $env:RUNNER_TEMP "voicerig-data"
+          $env:VOICERIG_ALLOW_LAN = "0"
+          $Process = Start-Process -FilePath $VoiceRig -PassThru -WindowStyle Hidden
+          try {
+            $Health = $null
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+                if ($Health.ok -eq $true -and $Health.service -eq "voicerig") { break }
+              } catch {
+                $Health = $null
+              }
+            }
+            if (-not $Health -or $Health.ok -ne $true -or $Health.service -ne "voicerig") {
+              throw "Installeret VoiceRig-service svarede ikke korrekt på /api/health."
+            }
+            if ($Health.version -ne "0.1.0") { throw "Uventet VoiceRig-version: $($Health.version)" }
+            if ($Health.voice_build_ready -ne $false) {
+              throw "Windows hosted runner bør ikke rapportere voice-build-ready uden CUDA/model-warmup."
+            }
+
+            $Html = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -TimeoutSec 5).Content
+            if ($Html -notmatch "VoiceRig") { throw "Installeret UI blev ikke serveret korrekt på Windows." }
+            Write-Host "Windows installed-service smoke: PASS"
+          } finally {
+            try {
+              $ServiceHealth = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+              if ($ServiceHealth.pid) {
+                Stop-Process -Id ([int]$ServiceHealth.pid) -Force -ErrorAction SilentlyContinue
+              }
+            } catch {
+              if ($Process -and -not $Process.HasExited) {
+                Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }

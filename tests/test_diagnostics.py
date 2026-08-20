@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import voicerig.diagnostics as diagnostics
+from voicerig.app.main import app
 from voicerig.app.ops_api import _safe_job
 
 
@@ -36,7 +37,6 @@ def test_support_bundle_contains_metadata_and_log_only(monkeypatch, tmp_path: Pa
     log = tmp_path / "logs" / "voicerig.log"
     log.parent.mkdir(parents=True)
     log.write_text("MODELRIG_TOKEN=secret\nnormal line\n", encoding="utf-8")
-    # Files that must never be swept into the support bundle.
     (tmp_path / "secret.mrvoice").write_bytes(b"profile")
     (tmp_path / "source.wav").write_bytes(b"RIFF-private")
 
@@ -77,3 +77,9 @@ def test_safe_job_excludes_original_files_and_speaker_audio():
     assert "PRIVATE_AUDIO" not in encoded
     assert "speaker_choices" not in safe
     assert "files" not in safe
+
+
+def test_operations_routes_are_mounted_on_product_app():
+    paths = {getattr(route, "path", None) for route in app.routes}
+    assert "/api/diagnostics" in paths
+    assert "/api/diagnostics/bundle" in paths

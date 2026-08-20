@@ -63,13 +63,23 @@ Scriptet læser de to maskinrapporter igen og afviser blandt andet:
 - acceptance kørt på en anden revision,
 - VoiceRig-service fra en anden/dirty revision,
 - manglende eller flyttede artifacts,
+- `.mrvoice` som ikke længere består package/checksum-valideringen,
+- reference-, VoiceRig- eller Piper-WAV som ikke længere består den samme
+  format/varighed/hørbarhedsvalidering som under maskin-PASS,
 - manglende diarization,
 - TTS som ikke brugte CUDA eller den forventede `.mrvoice`,
 - manglende peak-VRAM-data,
-- ModelRig som ikke bruger VoiceRig/korrrekt package,
+- ModelRig som ikke bruger VoiceRig/korrekt package,
+- fallback-test hvis `before` ikke brugte den samme `.mrvoice` som den fysiske
+  E2E byggede,
 - Piper fallback uden rigtig RIFF/WAV,
-- VoiceRig som ikke blev genetableret efter fallback-testen,
+- VoiceRig som ikke blev genetableret på **samme `.mrvoice`** efter
+  fallback-testen,
 - manglende manuel kvalitetsgodkendelse.
+
+Release-gaten genvaliderer altså de konkrete artifacts **efter** lyttekontrollen.
+En fil kan derfor ikke ændres mellem maskin-PASS og release-verdict og stadig
+arve det gamle PASS.
 
 Ved PASS oprettes:
 
@@ -77,9 +87,10 @@ Ved PASS oprettes:
 release-acceptance.json
 ```
 
-Rapporten indeholder SHA-256 for de konkrete acceptance-artifacts, så den
-manuelle lydvurdering kan bindes til præcis de filer, som maskinrapporterne
-beskriver. Selve lydfilerne og `.mrvoice` forbliver lokale og er Git-ignorerede.
+Rapporten indeholder SHA-256 for de konkrete acceptance-artifacts samt resultatet
+af den sidste genvalidering, så den manuelle lydvurdering kan bindes til præcis
+de filer, som maskinrapporterne beskriver. Selve lydfilerne og `.mrvoice`
+forbliver lokale og er Git-ignorerede.
 
 ## 4. Merge-regel
 

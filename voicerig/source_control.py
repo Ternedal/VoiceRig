@@ -34,4 +34,5 @@ def source_status() -> dict:
         "branch": branch or None,
         "dirty": None if porcelain is None else bool(porcelain),
         "available": revision is not None,
+        "root": str(repo_root().resolve()),
     }

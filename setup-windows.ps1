@@ -20,6 +20,85 @@ function Test-NativeCommand([string]$FilePath, [string[]]$Arguments) {
     }
 }
 
+function Get-ProcessExecutablePath($Process) {
+    try {
+        if ($Process.Path) { return [string]$Process.Path }
+    } catch {
+        # Fall back to CIM below. Accessing Process.Path can fail on some hosts.
+    }
+    try {
+        $Cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction Stop
+        if ($Cim -and $Cim.ExecutablePath) { return [string]$Cim.ExecutablePath }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+function Stop-LocalVoiceRigForRuntimeMutation([string]$ExpectedExe) {
+    $ExpectedFull = [System.IO.Path]::GetFullPath($ExpectedExe)
+    $StoppedIds = @{}
+
+    $Health = $null
+    try {
+        $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+    } catch {
+        $Health = $null
+    }
+
+    if ($Health) {
+        if ($Health.ok -ne $true -or $Health.service -ne "voicerig" -or -not $Health.pid) {
+            throw "Port 8765 svarer, men processen identificerer sig ikke sikkert som VoiceRig. Runtime-installationen stopper uden at røre processen."
+        }
+        $HealthPid = [int]$Health.pid
+        $HealthProcess = Get-Process -Id $HealthPid -ErrorAction Stop
+        $HealthPath = Get-ProcessExecutablePath $HealthProcess
+        if ([string]::IsNullOrWhiteSpace($HealthPath) -or -not [string]::Equals(
+            [System.IO.Path]::GetFullPath($HealthPath),
+            $ExpectedFull,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "En VoiceRig-service svarer på port 8765, men den kører ikke fra denne checkout. Runtime-installationen stopper uden at røre processen."
+        }
+
+        Write-Host "Stopper eksisterende lokal VoiceRig-proces PID $HealthPid før runtime-opdatering..."
+        Stop-Process -Id $HealthPid -Force -ErrorAction Stop
+        $StoppedIds[$HealthPid] = $true
+    }
+
+    # A previous failed install can leave the local launcher alive even if the
+    # health endpoint is already unavailable. Stop only processes whose actual
+    # executable path is exactly this checkout's launcher.
+    foreach ($Candidate in @(Get-Process -Name "voicerig" -ErrorAction SilentlyContinue)) {
+        if ($StoppedIds.ContainsKey([int]$Candidate.Id)) { continue }
+        $CandidatePath = Get-ProcessExecutablePath $Candidate
+        if ([string]::IsNullOrWhiteSpace($CandidatePath)) { continue }
+        if ([string]::Equals(
+            [System.IO.Path]::GetFullPath($CandidatePath),
+            $ExpectedFull,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            Write-Host "Stopper hængende lokal VoiceRig-proces PID $($Candidate.Id) før runtime-opdatering..."
+            Stop-Process -Id ([int]$Candidate.Id) -Force -ErrorAction Stop
+            $StoppedIds[[int]$Candidate.Id] = $true
+        }
+    }
+
+    foreach ($StoppedPid in @($StoppedIds.Keys)) {
+        $Exited = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            if (-not (Get-Process -Id ([int]$StoppedPid) -ErrorAction SilentlyContinue)) {
+                $Exited = $true
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $Exited) {
+            throw "VoiceRig-proces PID $StoppedPid frigav ikke runtime-filerne inden for 10 sekunder."
+        }
+    }
+}
+
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     throw "FFmpeg blev ikke fundet på PATH. Installér FFmpeg først."
 }
@@ -56,6 +135,9 @@ function New-Venv([string]$Path) {
 
 New-Venv ".venv"
 $MainPy = ".\.venv\Scripts\python.exe"
+$VoiceRigExePath = Join-Path $PSScriptRoot ".venv\Scripts\voicerig.exe"
+Stop-LocalVoiceRigForRuntimeMutation $VoiceRigExePath
+
 & $MainPy -m pip install --upgrade pip setuptools wheel
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i VoiceRig-miljøet." }
 

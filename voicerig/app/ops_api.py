@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import Response
 
 from voicerig import __version__
 from voicerig.app.jobs import job_manager
 from voicerig.app.pipeline import build_gate_status
-from voicerig.config import modelrig_base_url, modelrig_token
+from voicerig.config import modelrig_base_url, modelrig_token, set_local_secret
 from voicerig.diagnostics import build_support_bundle, configure_logging
 from voicerig.modelrig.client import status as modelrig_status
 from voicerig.profiles.library import list_voices
@@ -95,6 +95,29 @@ def diagnostics_snapshot() -> dict:
 @router.get("/api/diagnostics")
 def diagnostics() -> dict:
     return {"ok": True, **diagnostics_snapshot()}
+
+
+@router.get("/api/modelrig/config")
+def modelrig_config() -> dict:
+    return {
+        "ok": True,
+        "token_configured": modelrig_token() is not None,
+    }
+
+
+@router.post("/api/modelrig/config")
+def configure_modelrig_token(token: str = Form("")) -> dict:
+    try:
+        configured = set_local_secret("MODELRIG_TOKEN", token)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"ModelRig-tokenet kunne ikke gemmes: {exc}") from exc
+
+    current = modelrig_status(modelrig_base_url(), token=modelrig_token())
+    return {
+        "ok": True,
+        "token_configured": configured,
+        "modelrig": current,
+    }
 
 
 @router.get("/api/diagnostics/bundle")

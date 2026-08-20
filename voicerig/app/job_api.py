@@ -6,10 +6,14 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from voicerig.app.jobs import job_manager
+from voicerig.app.ops_api import router as operations_router
 from voicerig.app.pipeline import SUPPORTED_EXTENSIONS
 from voicerig.config import max_upload_mb
 
-router = APIRouter(prefix="/api/jobs", tags=["jobs"])
+# Root router keeps the public job paths stable while allowing the operations
+# router to be mounted alongside them through main.py's existing include.
+router = APIRouter()
+router.include_router(operations_router)
 
 
 @router.on_event("startup")
@@ -17,12 +21,12 @@ def _recover_interrupted_jobs() -> None:
     job_manager.recover()
 
 
-@router.get("")
+@router.get("/api/jobs", tags=["jobs"])
 def recent_jobs(limit: int = 20) -> dict:
     return {"ok": True, "jobs": job_manager.recent(limit=limit)}
 
 
-@router.post("/voices", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/api/jobs/voices", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
 def start_voice_job(
     name: str = Form(...),
     language: str = Form("da"),
@@ -61,7 +65,7 @@ def start_voice_job(
     return {"ok": True, "job": job}
 
 
-@router.get("/{job_id}")
+@router.get("/api/jobs/{job_id}", tags=["jobs"])
 def get_job(job_id: str) -> dict:
     try:
         return {"ok": True, "job": job_manager.get(job_id)}
@@ -71,7 +75,7 @@ def get_job(job_id: str) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/{job_id}/speaker")
+@router.post("/api/jobs/{job_id}/speaker", tags=["jobs"])
 def choose_job_speaker(job_id: str, anchor: str = Form(...)) -> dict:
     if len(anchor) > 64 or ":" not in anchor:
         raise HTTPException(status_code=400, detail="Ugyldigt speaker-anker.")
@@ -83,7 +87,7 @@ def choose_job_speaker(job_id: str, anchor: str = Form(...)) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{job_id}/cancel")
+@router.post("/api/jobs/{job_id}/cancel", tags=["jobs"])
 def cancel_job(job_id: str) -> dict:
     try:
         return {"ok": True, "job": job_manager.cancel(job_id)}

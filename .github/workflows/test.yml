@@ -106,6 +106,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Windows PowerShell 5.1 syntax
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem -Path . -File -Filter *.ps1 | ForEach-Object {
+            $Tokens = $null
+            $Errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$Tokens,
+              [ref]$Errors
+            )
+            if ($Errors.Count -gt 0) {
+              $Details = ($Errors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) -join "; "
+              throw "Windows PowerShell 5.1 kunne ikke parse $($_.Name): $Details"
+            }
+            Write-Host "PS5.1 parsed $($_.Name)"
+          }
       - name: Build Windows-test wheel
         shell: pwsh
         run: |

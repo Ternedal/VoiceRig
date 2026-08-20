@@ -6,15 +6,9 @@ Denne gate køres **kun efter** den fulde fysiske rig-acceptance i
 Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 `.mrvoice` eller WAV-filer til GitHub.
 
-## Aktuel software-releasekandidat
-
-- Git HEAD: `ed378c6db0a1a22b390df166d54f839c480dcc55`
-- GitHub Actions: run #381 — PASS
-- Gaten omfatter pytest, `compileall`, PowerShell-syntax, wheel+sdist-build,
-  isoleret wheel-installation, `pip check`, versionskontrakt, UI-asset og
-  `voicerig`-entrypoint.
-
-Hvis head ændres, er denne kandidat stale og samme CI-gate skal være grøn igen.
+Den aktuelle releasekandidat er altid **PR-head på tidspunktet for den fysiske
+acceptance**. Der hardcodes derfor ikke en commit-SHA i denne fil: hvis head
+ændres, er tidligere fysisk acceptance stale og skal køres igen.
 
 ## 1. Kør hele den automatiske fysiske test
 

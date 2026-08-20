@@ -24,13 +24,17 @@ jobs:
         run: |
           python -m venv /tmp/voicerig-wheel
           /tmp/voicerig-wheel/bin/python -m pip install dist/voicerig-*.whl
+          /tmp/voicerig-wheel/bin/python -m pip check
           cd /tmp
           /tmp/voicerig-wheel/bin/python - <<'PY'
           import importlib.metadata
           import shutil
-          from voicerig.app.main import UI_FILE
+          from voicerig import __version__
+          from voicerig.app.main import UI_FILE, app, health
 
-          assert importlib.metadata.version("voicerig") == "0.1.0"
+          assert importlib.metadata.version("voicerig") == __version__
+          assert app.version == __version__
+          assert health()["version"] == __version__
           assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
           assert "VoiceRig" in UI_FILE.read_text(encoding="utf-8")
           assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")

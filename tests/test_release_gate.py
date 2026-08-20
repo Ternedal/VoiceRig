@@ -27,6 +27,8 @@ def _evidence(tmp_path: Path) -> tuple[dict, dict]:
         },
         "preflight": {"readiness": {"hardware": {"vram_total_gb": 12.0}}},
         "voice": {
+            "id": "voice",
+            "name": "Voice",
             "package": package,
             "reference": reference,
             "validation_wav": validation_wav,
@@ -49,13 +51,27 @@ def _evidence(tmp_path: Path) -> tuple[dict, dict]:
     fallback = {
         "ok": True,
         "checkout_revision": "abc123",
+        "before": {"ok": True, "provider": "voicerig", "package": "voice.mrvoice"},
         "fallback": {"ok": True, "provider": "piper"},
         "piper_synthesis": {"provider": "piper", "riff": True, "output": piper_wav},
         "restarted": True,
         "restarted_service_revision": "abc123",
-        "restored": {"ok": True, "provider": "voicerig"},
+        "restored": {"ok": True, "provider": "voicerig", "package": "voice.mrvoice"},
     }
     return validation, fallback
+
+
+def _stub_validators(monkeypatch):
+    monkeypatch.setattr(
+        release_gate,
+        "validate_package",
+        lambda path: {"id": "voice", "name": "Voice"},
+    )
+    monkeypatch.setattr(
+        release_gate,
+        "validate_wav",
+        lambda path, **kwargs: {"sample_rate": 24000, "duration": 2.0, "rms": 0.1},
+    )
 
 
 def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monkeypatch, tmp_path: Path):
@@ -64,6 +80,7 @@ def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monke
         "source_status",
         lambda: {"available": True, "revision": "abc123", "dirty": False, "branch": "agent/voicerig-mvp"},
     )
+    _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
 
     report = release_gate.evaluate_release(
@@ -76,8 +93,13 @@ def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monke
     assert report["ok"] is True
     assert report["stage"] == "release-ready"
     assert report["artifacts"]["package"]["sha256"]
+    assert report["artifacts"]["package"]["validated"] is True
     assert report["artifacts"]["validation_wav"]["sha256"]
+    assert report["artifacts"]["validation_wav"]["validated"] is True
     assert report["artifacts"]["piper_fallback_wav"]["sha256"]
+    assert report["artifacts"]["piper_fallback_wav"]["validated"] is True
+    assert report["fallback"]["before_package"] == "voice.mrvoice"
+    assert report["fallback"]["restored_package"] == "voice.mrvoice"
 
 
 def test_release_gate_rejects_missing_manual_quality_pass(monkeypatch, tmp_path: Path):
@@ -86,6 +108,7 @@ def test_release_gate_rejects_missing_manual_quality_pass(monkeypatch, tmp_path:
         "source_status",
         lambda: {"available": True, "revision": "abc123", "dirty": False},
     )
+    _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
 
     report = release_gate.evaluate_release(validation, fallback, quality_pass=False, quality_note="")
@@ -100,6 +123,7 @@ def test_release_gate_rejects_stale_revision_and_missing_artifact(monkeypatch, t
         "source_status",
         lambda: {"available": True, "revision": "new-head", "dirty": False},
     )
+    _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
     Path(validation["voice"]["validation_wav"]).unlink()
 
@@ -113,6 +137,58 @@ def test_release_gate_rejects_stale_revision_and_missing_artifact(monkeypatch, t
     assert report["ok"] is False
     assert any("revision" in blocker.lower() for blocker in report["blockers"])
     assert any("validation WAV" in blocker for blocker in report["blockers"])
+
+
+def test_release_gate_rejects_artifact_that_changed_after_machine_pass(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        release_gate,
+        "source_status",
+        lambda: {"available": True, "revision": "abc123", "dirty": False},
+    )
+    validation, fallback = _evidence(tmp_path)
+
+    def broken_package(path):
+        raise ValueError("checksum mismatch")
+
+    monkeypatch.setattr(release_gate, "validate_package", broken_package)
+    monkeypatch.setattr(
+        release_gate,
+        "validate_wav",
+        lambda path, **kwargs: {"sample_rate": 24000, "duration": 2.0, "rms": 0.1},
+    )
+
+    report = release_gate.evaluate_release(
+        validation,
+        fallback,
+        quality_pass=True,
+        quality_note="Lyden blev vurderet før package-integriteten ændrede sig.",
+    )
+
+    assert report["ok"] is False
+    assert any("kan ikke længere valideres" in blocker for blocker in report["blockers"])
+
+
+def test_release_gate_rejects_fallback_for_different_voice_package(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        release_gate,
+        "source_status",
+        lambda: {"available": True, "revision": "abc123", "dirty": False},
+    )
+    _stub_validators(monkeypatch)
+    validation, fallback = _evidence(tmp_path)
+    fallback["before"]["package"] = "other.mrvoice"
+    fallback["restored"]["package"] = "other.mrvoice"
+
+    report = release_gate.evaluate_release(
+        validation,
+        fallback,
+        quality_pass=True,
+        quality_note="Lyden er vurderet.",
+    )
+
+    assert report["ok"] is False
+    assert any("starttilstand" in blocker for blocker in report["blockers"])
+    assert any("vendte ModelRig ikke tilbage" in blocker for blocker in report["blockers"])
 
 
 def test_complete_acceptance_wrapper_requires_explicit_quality_acknowledgement():

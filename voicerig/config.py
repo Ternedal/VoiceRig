@@ -5,10 +5,11 @@ import shutil
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _LEGACY_DATA_DIR_ENV_VALUES = {"voicerig-data", "./voicerig-data"}
+_LOCAL_SECRET_KEYS = {"MODELRIG_TOKEN"}
 
 
 def load_local_env(path: Path | None = None) -> bool:
@@ -26,6 +27,37 @@ def load_local_env(path: Path | None = None) -> bool:
 
 
 load_local_env()
+
+
+def set_local_secret(key: str, value: str) -> bool:
+    """Persist one explicitly allowed local secret without exposing it via APIs.
+
+    The product UI needs to configure ModelRig authentication without asking the
+    user to edit `.env` by hand. Keep this helper deliberately allow-listed so a
+    future route cannot become an arbitrary environment-file writer.
+    """
+    if key not in _LOCAL_SECRET_KEYS:
+        raise ValueError("Ugyldig lokal secret-nøgle.")
+    if "\n" in value or "\r" in value:
+        raise ValueError("Secret-værdien må ikke indeholde linjeskift.")
+    if len(value) > 4096:
+        raise ValueError("Secret-værdien er for lang.")
+
+    env_path = (_REPO_ROOT / ".env").resolve()
+    if not env_path.exists():
+        example = _REPO_ROOT / ".env.example"
+        if example.is_file():
+            shutil.copy2(example, env_path)
+        else:
+            env_path.touch()
+
+    clean = value.strip()
+    set_key(str(env_path), key, clean, quote_mode="always")
+    if clean:
+        os.environ[key] = clean
+        return True
+    os.environ.pop(key, None)
+    return False
 
 
 def _default_data_dir() -> Path:

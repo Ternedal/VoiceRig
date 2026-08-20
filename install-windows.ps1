@@ -38,6 +38,62 @@ function Install-WingetPackage([string]$Id, [string]$DisplayName) {
     Refresh-ProcessPath
 }
 
+function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value) {
+    $Lines = @()
+    if (Test-Path -LiteralPath $Path) {
+        $Lines = @(Get-Content -LiteralPath $Path)
+    }
+    $Prefix = "$Key="
+    $Updated = $false
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        if ($Lines[$i].StartsWith($Prefix, [System.StringComparison]::Ordinal)) {
+            $Lines[$i] = "$Prefix$Value"
+            $Updated = $true
+            break
+        }
+    }
+    if (-not $Updated) {
+        $Lines += "$Prefix$Value"
+    }
+    $Temp = "$Path.tmp"
+    [System.IO.File]::WriteAllLines(
+        $Temp,
+        [string[]]$Lines,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Move-Item -LiteralPath $Temp -Destination $Path -Force
+}
+
+function Read-HuggingFaceToken {
+    Write-Host ""
+    Write-Host "pyannote community-1 kræver én gang, at modellens vilkår accepteres på Hugging Face."
+    if (-not $NoBrowser) {
+        Start-Process "https://huggingface.co/pyannote/speaker-diarization-community-1"
+    } else {
+        Write-Host "Åbn: https://huggingface.co/pyannote/speaker-diarization-community-1"
+    }
+    Write-Host "Acceptér vilkårene, opret/kopiér et Hugging Face read-token og indsæt det nedenfor."
+    Write-Host "Tokenet vises ikke på skærmen og gemmes kun i VoiceRigs lokale .env."
+    $Secure = Read-Host "Hugging Face read-token (Enter = stop installationen her)" -AsSecureString
+    if (-not $Secure -or $Secure.Length -eq 0) { return $null }
+    $Ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Ptr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Ptr)
+    }
+}
+
+function Invoke-ModelWarmup([string]$Python) {
+    $Output = @(& $Python -m voicerig.model_warmup 2>&1)
+    $ExitCode = $LASTEXITCODE
+    foreach ($Line in $Output) { Write-Host $Line }
+    return @{
+        Ok = ($ExitCode -eq 0)
+        Text = ($Output -join "`n")
+    }
+}
+
 Write-Host "VoiceRig V1 — Windows installation"
 Write-Host "Kontrollerer nødvendige systemkomponenter..."
 
@@ -56,11 +112,45 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git blev inst
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { throw "FFmpeg blev installeret, men kan stadig ikke findes på PATH. Genstart terminalen og kør scriptet igen." }
 if (-not (Test-Python311)) { throw "Python 3.11 blev installeret, men kan stadig ikke findes. Genstart terminalen og kør scriptet igen." }
 
-Write-Host "Systemafhængigheder er klar. Installerer VoiceRig-runtime og modeller..."
-$SetupArgs = @()
-if ($SkipModelWarmup) { $SetupArgs += "-SkipModelWarmup" }
-& (Join-Path $PSScriptRoot "setup-windows.ps1") @SetupArgs
-if ($LASTEXITCODE -ne 0) { throw "VoiceRig setup fejlede." }
+Write-Host "Systemafhængigheder er klar. Installerer VoiceRig-runtime..."
+# The product installer owns the user-facing model warmup flow. setup-windows
+# still supports direct warmup for development/acceptance, but installing the
+# runtime first lets us recover from gated Hugging Face access without repeating
+# every dependency installation step.
+& (Join-Path $PSScriptRoot "setup-windows.ps1") -SkipModelWarmup
+if ($LASTEXITCODE -ne 0) { throw "VoiceRig runtime-setup fejlede." }
+
+$MainPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $MainPy)) { throw "VoiceRig Python-runtime mangler efter setup." }
+
+if (-not $SkipModelWarmup) {
+    Write-Host ""
+    Write-Host "Henter og verificerer VoiceRig-modeller..."
+    $Warmup = Invoke-ModelWarmup $MainPy
+    if (-not $Warmup.Ok) {
+        if ($Warmup.Text -notmatch "pyannote community-1") {
+            throw "Model-warmup fejlede af en anden årsag end Hugging Face-adgang. Se fejlen ovenfor og kør install-windows.ps1 igen efter rettelse."
+        }
+
+        $Token = Read-HuggingFaceToken
+        if ([string]::IsNullOrWhiteSpace($Token)) {
+            throw "VoiceRig-runtime er installeret, men modellerne er ikke klar. Acceptér pyannote-vilkårene og kør install-windows.ps1 igen."
+        }
+        try {
+            Set-DotEnvValue (Join-Path $PSScriptRoot ".env") "HF_TOKEN" $Token.Trim()
+            $env:HF_TOKEN = $Token.Trim()
+            Write-Host "HF-adgang er gemt lokalt. Prøver model-warmup igen..."
+            $Warmup = Invoke-ModelWarmup $MainPy
+        } finally {
+            $Token = $null
+        }
+        if (-not $Warmup.Ok) {
+            throw "Model-warmup fejlede stadig efter HF-token blev gemt. Kontrollér at community-1-vilkårene er accepteret, og at tokenet har read-adgang."
+        }
+    }
+} else {
+    Write-Warning "Model-warmup er sprunget over. Voice creation forbliver låst, indtil modellerne er verificeret."
+}
 
 $Health = $null
 for ($i = 0; $i -lt 30; $i++) {
@@ -73,6 +163,14 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
 }
 if (-not $Health -or $Health.ok -ne $true) { throw "VoiceRig blev installeret, men den lokale service svarer ikke." }
+
+if (-not $SkipModelWarmup) {
+    $Readiness = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/readiness" -TimeoutSec 5
+    if ($Readiness.ready -ne $true) {
+        $Reason = @($Readiness.blockers) -join "; "
+        throw "Modellerne blev verificeret, men den kørende VoiceRig-service er ikke build-klar: $Reason"
+    }
+}
 
 Write-Host ""
 Write-Host "VoiceRig er klar. Service PID $($Health.pid), version $($Health.version)."

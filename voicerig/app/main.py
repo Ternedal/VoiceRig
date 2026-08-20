@@ -11,7 +11,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from voicerig import __version__
 from voicerig.app.job_api import router as jobs_router
 from voicerig.app.netguard import allow_lan, is_loopback_client
-from voicerig.app.pipeline import SUPPORTED_EXTENSIONS, SpeakerSelectionRequired, create_voice
+from voicerig.app.ops_api import router as ops_router
+from voicerig.app.pipeline import (
+    SUPPORTED_EXTENSIONS,
+    SpeakerSelectionRequired,
+    VoiceBuildBusy,
+    create_voice,
+)
 from voicerig.app.tts_api import router as tts_router
 from voicerig.config import data_dir, max_upload_mb, modelrig_base_url, modelrig_token
 from voicerig.engines.package_runtime import status as tts_runtime_status
@@ -36,6 +42,7 @@ from voicerig.source_control import source_status
 app = FastAPI(title="VoiceRig", version=__version__)
 app.include_router(tts_router)
 app.include_router(jobs_router)
+app.include_router(ops_router)
 UI_FILE = Path(__file__).resolve().parents[1] / "ui" / "index.html"
 _BUILD_LOCK = threading.Lock()
 _IMPORT_LIMIT_BYTES = 160 * 1024 * 1024
@@ -265,6 +272,7 @@ def build_voice(
                     language=language,
                     speaker_choice=speaker_choice,
                     speaker_anchor=speaker_anchor,
+                    wait_for_build_slot=False,
                 )
             except SpeakerSelectionRequired as exc:
                 raise HTTPException(
@@ -275,6 +283,8 @@ def build_voice(
                         "speakers": exc.choices,
                     },
                 ) from exc
+            except VoiceBuildBusy as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             except RuntimeError as exc:

@@ -57,7 +57,7 @@ Installeren:
 5. håndterer første Hugging Face-adgang interaktivt hvis pyannote kræver den,
 6. skriver model-readiness i den stabile per-user datamappe,
 7. sætter per-user autostart,
-8. starter og verificerer den lokale service,
+8. starter og verificerer den lokale service mod **samme checkout-root og startup Git HEAD**,
 9. åbner VoiceRig i browseren.
 
 `setup-windows.ps1` er den lavere niveau setup/acceptance-vej. Almindelige installationer bør bruge `install-windows.ps1`.
@@ -90,7 +90,7 @@ Start/åbn VoiceRig med:
 .\start-windows.ps1
 ```
 
-UI kører på `http://127.0.0.1:8765` og er loopback-only som standard.
+UI kører på `http://127.0.0.1:8765` og er loopback-only som standard. Produktstart accepterer ikke en service fra en anden checkout eller en stale proces, der blev startet før checkoutets Git HEAD ændrede sig.
 
 **Opret stemme** er først aktiv, når hardware- og model-readiness er grøn. Ved flerspeaker-tvivl vises korte afspillelige prøver; brugerens valg bindes til et konkret taleturn, hvorefter buildet fortsætter automatisk.
 
@@ -130,13 +130,15 @@ Opdatér en eksisterende checkout med:
 .\update-windows.ps1
 ```
 
-Updateren installerer og verificerer den nye revision og ruller tilbage til den tidligere fungerende HEAD, hvis den nye service ikke kan installeres/starte korrekt.
+Updateren installerer og verificerer den nye revision og ruller tilbage til den tidligere fungerende HEAD, hvis den nye service ikke kan installeres/starte korrekt. En opdatering godkendes kun, når den aktive service rapporterer den nye clean startup-identitet fra den samme checkout-root.
 
 Afinstallation:
 
 ```powershell
 .\uninstall-windows.ps1
 ```
+
+Afinstalleren stopper kun VoiceRig-processer og autostart, der kan knyttes til **denne checkout**. En anden VoiceRig-checkout på samme maskine røres ikke.
 
 Brugerdata og profiler bevares som udgangspunkt. Lokale `HF_TOKEN`/`MODELRIG_TOKEN`-værdier ryddes fra VoiceRigs `.env` som sikker standard. Hvis de bevidst skal bevares til en senere geninstallation:
 
@@ -168,7 +170,7 @@ Fuld produkt-E2E med rigtige klip:
   -Name "VoiceRig Acceptance"
 ```
 
-Den fulde validator bruger den kørende VoiceRig-service til både build og syntese og binder acceptance-rapporten til clean checkout + den kørende services source revision.
+Den fulde validator bruger den kørende VoiceRig-service til både build og syntese og binder acceptance-rapporten til et clean checkout samt service-processens **startup revision og checkout-root**. En gammel proces kan derfor ikke bestå ved blot at Git HEAD ændres under den.
 
 Med ModelRig som hård gate:
 
@@ -202,9 +204,11 @@ VoiceRig-versionen har én kilde i `voicerig/__init__.py`. CI:
 5. installerer wheel i en frisk runtime uden for source-træet,
 6. starter den installerede VoiceRig-service på Linux og tester UI-assets/config/diagnostics over rigtig localhost HTTP,
 7. bygger og installerer samme produktvej på Windows og tester service/UI/assets/diagnostics over localhost HTTP,
-8. parser alle PowerShell-scripts.
+8. parser alle PowerShell-scripts med både moderne PowerShell og Windows PowerShell 5.1,
+9. kører installerens faktiske retry/stop-logik mod en editable Windows-service og beviser filfrigivelse,
+10. kører en separat Windows A/B-checkout lifecycle-smoke, der beviser stale-process-afvisning, foreign-start-afvisning, foreign-uninstall isolation og sikker uninstall af den ejende checkout.
 
-Den aktuelle grønne PR-head og CI-run registreres i PR #1, ikke som et hårdkodet SHA i README.
+Den aktuelle grønne PR-head og CI-runs registreres i PR #1/issue #3, ikke som et hårdkodet SHA i README.
 
 ## Release-status
 

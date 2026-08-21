@@ -14,6 +14,34 @@ if ($WorkerUri.Scheme -ne "http" -or $WorkerUri.Host -notin @("127.0.0.1", "loca
     throw "Piper fallback-testen må kun kalde ModelRig-worker på loopback."
 }
 
+function Test-SamePath([string]$Left, [string]$Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    try {
+        return [string]::Equals(
+            [System.IO.Path]::GetFullPath($Left).TrimEnd('\'),
+            [System.IO.Path]::GetFullPath($Right).TrimEnd('\'),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Get-ProcessExecutablePath($Process) {
+    try {
+        if ($Process.Path) { return [string]$Process.Path }
+    } catch {
+        # Fall back to CIM below.
+    }
+    try {
+        $Cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction Stop
+        if ($Cim -and $Cim.ExecutablePath) { return [string]$Cim.ExecutablePath }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
 function Get-VoiceRigHealth {
     try {
         return Invoke-RestMethod -Uri ($VoiceRigUrl.TrimEnd('/') + "/api/health") -TimeoutSec 3
@@ -45,13 +73,16 @@ function Wait-VoiceRigDown {
     throw "VoiceRig-service stoppede ikke inden for 10 sekunder."
 }
 
-function Wait-VoiceRigReady([string]$ExpectedRevision) {
+function Wait-VoiceRigReady([string]$ExpectedRevision, [string]$ExpectedRoot) {
     for ($i = 0; $i -lt 120; $i++) {
         Start-Sleep -Milliseconds 250
         $Health = Get-VoiceRigHealth
         if ($Health -and $Health.ok -eq $true -and $Health.service -eq "voicerig") {
             if (-not $Health.source -or $Health.source.revision -ne $ExpectedRevision) {
                 throw "Genstartet VoiceRig kører forkert Git HEAD. Forventede $ExpectedRevision, fik $($Health.source.revision)."
+            }
+            if (-not $Health.source.root -or -not (Test-SamePath ([string]$Health.source.root) $ExpectedRoot)) {
+                throw "Genstartet VoiceRig tilhører ikke den checkout, fallback-testen startede fra."
             }
             if ($Health.source.dirty -ne $false) {
                 throw "Genstartet VoiceRig rapporterer et dirty checkout."
@@ -126,6 +157,7 @@ $CheckoutRevision = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $CheckoutRevision) {
     throw "Kunne ikke aflæse VoiceRig Git HEAD."
 }
+$CheckoutRoot = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 $Dirty = (& git status --porcelain)
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke aflæse VoiceRig Git status." }
 if ($Dirty) { throw "Piper fallback acceptance kræver et clean VoiceRig-checkout." }
@@ -134,8 +166,14 @@ $Initial = Get-VoiceRigHealth
 if (-not $Initial -or $Initial.ok -ne $true -or $Initial.service -ne "voicerig" -or -not $Initial.pid) {
     throw "VoiceRig-service skal køre og identificere sig selv før fallback-testen."
 }
-if (-not $Initial.source -or $Initial.source.revision -ne $CheckoutRevision -or $Initial.source.dirty -ne $false) {
-    throw "Den aktive VoiceRig-service matcher ikke det clean checkout, der testes."
+if (
+    -not $Initial.source -or
+    $Initial.source.revision -ne $CheckoutRevision -or
+    $Initial.source.dirty -ne $false -or
+    -not $Initial.source.root -or
+    -not (Test-SamePath ([string]$Initial.source.root) $CheckoutRoot)
+) {
+    throw "Den aktive VoiceRig-service matcher ikke den clean checkout-identitet, der testes."
 }
 
 $Before = Wait-ModelRigProvider "voicerig"
@@ -149,8 +187,17 @@ $RestartedHealth = $null
 $Failure = $null
 
 try {
-    Write-Host "Stopper verificeret VoiceRig PID $StoppedPid for at bevise Piper fallback..."
+    Write-Host "Stopper verificeret VoiceRig PID $StoppedPid fra denne checkout for at bevise Piper fallback..."
     Stop-Process -Id $StoppedPid -Force -ErrorAction Stop
+
+    # If the HTTP PID was the Python child, the distlib voicerig.exe parent can
+    # briefly survive. Stop only this checkout's launcher before fallback.
+    foreach ($Candidate in @(Get-Process -Name "voicerig" -ErrorAction SilentlyContinue)) {
+        $CandidatePath = Get-ProcessExecutablePath $Candidate
+        if (Test-SamePath $CandidatePath $VoiceRigExe) {
+            Stop-Process -Id ([int]$Candidate.Id) -Force -ErrorAction Stop
+        }
+    }
     Wait-VoiceRigDown
 
     $Fallback = Wait-ModelRigProvider "piper"
@@ -164,7 +211,7 @@ try {
         Start-Process -FilePath $VoiceRigExe -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
     }
     try {
-        $RestartedHealth = Wait-VoiceRigReady $CheckoutRevision
+        $RestartedHealth = Wait-VoiceRigReady $CheckoutRevision $CheckoutRoot
         $Restarted = $true
         $Restored = Wait-ModelRigProvider "voicerig"
         Write-Host "VoiceRig restore: PASS (provider=voicerig)"
@@ -177,6 +224,7 @@ try {
 $Result = [ordered]@{
     ok = (-not $Failure -and $Fallback -and $Fallback.ok -eq $true -and $Fallback.provider -eq "piper" -and $PiperSynthesis -and $PiperSynthesis.provider -eq "piper" -and $PiperSynthesis.riff -eq $true -and $Restarted -and $Restored -and $Restored.ok -eq $true -and $Restored.provider -eq "voicerig")
     checkout_revision = $CheckoutRevision
+    checkout_root = $CheckoutRoot
     stopped_voicerig_pid = $StoppedPid
     before = $Before
     fallback = $Fallback
@@ -184,6 +232,7 @@ $Result = [ordered]@{
     restarted = $Restarted
     restarted_service_pid = if ($RestartedHealth) { $RestartedHealth.pid } else { $null }
     restarted_service_revision = if ($RestartedHealth -and $RestartedHealth.source) { $RestartedHealth.source.revision } else { $null }
+    restarted_service_root = if ($RestartedHealth -and $RestartedHealth.source) { $RestartedHealth.source.root } else { $null }
     restored = $Restored
     error = $Failure
 }

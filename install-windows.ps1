@@ -98,8 +98,20 @@ function Read-HuggingFaceToken {
 }
 
 function Invoke-ModelWarmup([string]$Python) {
-    $Output = @(& $Python -m voicerig.model_warmup 2>&1)
-    $ExitCode = $LASTEXITCODE
+    # Windows PowerShell 5.1 turns native stderr into non-terminating ErrorRecord
+    # objects. Under the installer's global ErrorActionPreference=Stop, ordinary
+    # Python warnings or an expected warmup failure would otherwise terminate the
+    # script before LASTEXITCODE and the captured diagnostics can be inspected.
+    $PreviousPreference = $ErrorActionPreference
+    $Output = @()
+    $ExitCode = 1
+    try {
+        $ErrorActionPreference = "Continue"
+        $Output = @(& $Python -m voicerig.model_warmup 2>&1)
+        $ExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
     foreach ($Line in $Output) { Write-Host $Line }
     return @{
         Ok = ($ExitCode -eq 0)

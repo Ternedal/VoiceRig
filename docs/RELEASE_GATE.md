@@ -6,14 +6,14 @@ Denne gate køres **kun efter** den fulde fysiske rig-acceptance i
 Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 `.mrvoice` eller WAV-filer til GitHub.
 
-Den aktuelle releasekandidat er altid **PR-head på tidspunktet for den fysiske
-acceptance**. Der hardcodes derfor ikke en commit-SHA i denne fil: hvis head
-ændres, er tidligere fysisk acceptance stale og skal køres igen. Den konkrete
-grønne kandidat og CI-run dokumenteres i PR #1, ikke i versionsstyrede filer.
+Den konkrete immutable release-ref, commit og grønne CI-runs dokumenteres i
+issue #3 og PR #1. Der hardcodes derfor ikke live SHA eller run-numre i denne fil.
+Hvis den pinned VoiceRig-commit ændres, er tidligere fysisk acceptance stale og
+skal køres igen.
 
 ## 1. Kør hele den automatiske fysiske test
 
-På RTX 3060-riggen, fra et clean checkout af den PR-head der skal releases:
+På RTX 3060-riggen, fra det clean checkout af den pinned release-ref:
 
 ```powershell
 .\validate-rig.ps1 `
@@ -34,6 +34,11 @@ validation-output\*-validation.wav
 validation-output\piper-fallback.wav
 ```
 
+Maskinbeviset binder ikke kun til Git SHA. VoiceRig-serviceidentiteten fryses ved
+processtart, og validation kræver samme clean **startup revision + checkout-root**
+som acceptance-processen. En stale proces eller en anden clone på samme SHA kan
+derfor ikke bestå.
+
 ## 2. Lyt
 
 Afspil både den udtrukne reference og VoiceRig-syntesen.
@@ -43,12 +48,10 @@ Godkend kun kvaliteten hvis:
 - referencefilen indeholder den ønskede person og ikke en anden speaker,
 - dansk tale er tydelig og forståelig,
 - stemmeidentiteten er genkendelig,
-- der ikke er alvorlige metalliske artefakter, gentagelsesloops eller
-  hallucineret tale.
+- der ikke er alvorlige metalliske artefakter, gentagelsesloops eller hallucineret tale.
 
 Speaker-cosine i `validation-report.json` er fortsat kun en informationsmåling;
-den må ikke erstatte lyttekontrollen før en tærskel er kalibreret på rigtige
-samples.
+den må ikke erstatte lyttekontrollen før en tærskel er kalibreret på rigtige samples.
 
 ## 3. Lav det samlede release-verdict
 
@@ -65,15 +68,15 @@ Efter lytning:
 Scriptet læser de to maskinrapporter igen og afviser blandt andet:
 
 - dirty eller ændret Git HEAD,
-- acceptance kørt på en anden revision,
-- VoiceRig-service fra en anden/dirty revision,
+- acceptance kørt på en anden revision eller checkout-root,
+- VoiceRig-service fra en anden root, revision eller dirty startup-tilstand,
 - manglende eller flyttede artifacts,
 - manglende diarization,
 - TTS som ikke brugte CUDA eller den forventede `.mrvoice`,
 - manglende peak-VRAM-data,
 - ModelRig som ikke bruger VoiceRig/korrekt package,
 - Piper fallback uden rigtig RIFF/WAV,
-- fallback/restore som ikke bruger samme `.mrvoice` som den fysiske E2E,
+- fallback/restore som ikke bruger samme `.mrvoice`, root og revision som den fysiske E2E,
 - VoiceRig som ikke blev genetableret efter fallback-testen,
 - manglende manuel kvalitetsgodkendelse.
 
@@ -81,39 +84,42 @@ Slutgaten genvaliderer `.mrvoice` samt reference-, VoiceRig- og Piper-WAV igen
 efter lyttekontrollen. Dermed kan ændrede eller beskadigede lokale artifacts ikke
 bestå på et tidligere maskin-PASS.
 
-Ved PASS oprettes:
-
-```text
-release-acceptance.json
-```
-
-Rapporten indeholder SHA-256 for de konkrete acceptance-artifacts, så den
-manuelle lydvurdering kan bindes til præcis de filer, som maskinrapporterne
-beskriver. Selve lydfilerne og `.mrvoice` forbliver lokale og er Git-ignorerede.
+Ved PASS oprettes `release-acceptance.json`. Rapporten indeholder SHA-256 for de
+konkrete acceptance-artifacts. Selve lydfilerne og `.mrvoice` forbliver lokale og
+Git-ignorerede.
 
 ## 4. Software/distribution gate
 
-GitHub Actions på **samme PR-head** skal være grøn. Den autoritative CI-gate
-omfatter ikke kun editable tests, men også den pakke der faktisk kan distribueres:
+Alle autoritative GitHub Actions-workflows på **samme pinned VoiceRig commit**
+skal være grønne. Gaten omfatter:
 
 1. pytest + `compileall`,
-2. PowerShell-syntax,
-3. build af wheel og sdist,
-4. installation af wheel i separat venv uden for source-træet,
-5. `pip check`,
-6. versionskontrakt mellem package metadata, `voicerig.__version__`, FastAPI og health,
-7. verificering af at UI-asset og `voicerig`-entrypoint findes i wheel'en.
+2. browser-JavaScript syntax,
+3. PowerShell parsing, inklusive Windows PowerShell 5.1,
+4. wheel + sdist build,
+5. installation af wheel i separat venv og `pip check`,
+6. installeret Linux-service HTTP smoke,
+7. installeret Windows-service HTTP smoke,
+8. installerens faktiske retry/stopfunktion mod en editable Windows-service,
+9. filfrigivelse af `voicerig.exe` før runtime-mutation,
+10. separat Windows lifecycle A/B-checkout smoke, som beviser:
+   - stale service afvises efter HEAD-skift,
+   - en anden checkout på samme SHA ikke accepteres som den lokale service,
+   - foreign uninstall ikke stopper den ejende checkout,
+   - ejende checkout kan stoppe service/launcher og fjerne sin egen runtime.
 
-Et grønt editable checkout er derfor ikke nok til release.
+Et grønt unit- eller editable-checkout alene er derfor ikke nok til release.
 
 ## 5. Merge-regel
 
 PR #1 kan først gøres ready/merge, når:
 
 1. `release-acceptance.json` siger `ok: true`,
-2. `source.revision` er identisk med PR-head,
-3. GitHub Actions er grøn på **samme PR-head**, inklusive wheel/sdist-gaten,
-4. der ikke er nye review-blockers.
+2. final `source.revision` og `source.root` matcher den pinned release-kandidat,
+3. validation evidence har `same_revision == true` og `same_root == true`,
+4. Piper fallback/restore matcher samme root + revision,
+5. alle autoritative Actions-workflows er grønne på **samme commit**,
+6. der ikke er nye review-blockers.
 
 Hvis koden ændres efter den fysiske acceptance, er releasebeviset stale. Kør den
-fysiske acceptance og release-gaten igen på den nye head.
+fysiske acceptance og release-gaten igen på den nye pinned kandidat.

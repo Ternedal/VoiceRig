@@ -1,3 +1,7 @@
+param(
+    [switch]$NoBrowser
+)
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
@@ -73,5 +77,9 @@ if ($Health) {
     }
 }
 
-Start-Process "http://127.0.0.1:8765/"
-Write-Host "VoiceRig kører lokalt fra den verificerede checkout og UI er åbnet i browseren."
+if (-not $NoBrowser) {
+    Start-Process "http://127.0.0.1:8765/"
+    Write-Host "VoiceRig kører lokalt fra den verificerede checkout og UI er åbnet i browseren."
+} else {
+    Write-Host "VoiceRig kører lokalt fra den verificerede checkout. Browseråbning er sprunget over."
+}

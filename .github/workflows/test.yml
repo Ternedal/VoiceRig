@@ -124,6 +124,59 @@ jobs:
             }
             Write-Host "PS5.1 parsed $($_.Name)"
           }
+      - name: Editable checkout retry identity and file-release smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-editable-retry"
+          python -m venv $Venv
+          $Python = Join-Path $Venv "Scripts\python.exe"
+          & $Python -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "Editable VoiceRig-installation fejlede." }
+          $VoiceRig = Join-Path $Venv "Scripts\voicerig.exe"
+          if (-not (Test-Path -LiteralPath $VoiceRig)) { throw "Editable voicerig.exe mangler." }
+
+          $env:VOICERIG_DATA_DIR = Join-Path $env:RUNNER_TEMP "voicerig-editable-data"
+          $env:VOICERIG_ALLOW_LAN = "0"
+          $Launcher = Start-Process -FilePath $VoiceRig -WorkingDirectory $PWD.Path -PassThru -WindowStyle Hidden
+          try {
+            $Health = $null
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 250
+              try {
+                $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+                if ($Health.ok -eq $true -and $Health.service -eq "voicerig") { break }
+              } catch { $Health = $null }
+            }
+            if (-not $Health -or $Health.service -ne "voicerig") { throw "Editable VoiceRig startede ikke." }
+            $ExpectedRoot = [System.IO.Path]::GetFullPath($PWD.Path).TrimEnd('\')
+            $ActualRoot = [System.IO.Path]::GetFullPath([string]$Health.source.root).TrimEnd('\')
+            if (-not [string]::Equals($ExpectedRoot, $ActualRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Editable service rapporterede forkert source.root. Forventede '$ExpectedRoot', fik '$ActualRoot'."
+            }
+
+            $HealthPid = [int]$Health.pid
+            Stop-Process -Id $HealthPid -Force -ErrorAction SilentlyContinue
+            if ($Launcher -and -not $Launcher.HasExited) {
+              Stop-Process -Id $Launcher.Id -Force -ErrorAction SilentlyContinue
+            }
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              if (-not (Get-Process -Id $HealthPid -ErrorAction SilentlyContinue) -and (-not $Launcher -or $Launcher.HasExited)) { break }
+            }
+
+            # Windows proves the launcher is actually released by replacing it.
+            $Probe = "$VoiceRig.release-probe"
+            Copy-Item -LiteralPath $VoiceRig -Destination $Probe -Force
+            Move-Item -LiteralPath $Probe -Destination $VoiceRig -Force
+            Write-Host "Windows editable retry identity/file-release smoke: PASS"
+          } finally {
+            try {
+              $ServiceHealth = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
+              if ($ServiceHealth.pid) { Stop-Process -Id ([int]$ServiceHealth.pid) -Force -ErrorAction SilentlyContinue }
+            } catch {}
+            if ($Launcher -and -not $Launcher.HasExited) { Stop-Process -Id $Launcher.Id -Force -ErrorAction SilentlyContinue }
+          }
       - name: Build Windows-test wheel
         shell: pwsh
         run: |

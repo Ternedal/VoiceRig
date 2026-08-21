@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,17 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _same_path(left: object, right: object) -> bool:
+    if not isinstance(left, str) or not left.strip() or not isinstance(right, str) or not right.strip():
+        return False
+    try:
+        left_path = os.path.normcase(os.path.abspath(os.path.realpath(os.path.expanduser(left))))
+        right_path = os.path.normcase(os.path.abspath(os.path.realpath(os.path.expanduser(right))))
+    except (OSError, ValueError):
+        return False
+    return left_path == right_path
 
 
 def _artifact(path_value: object, label: str, blockers: list[str]) -> dict | None:
@@ -97,11 +109,14 @@ def evaluate_release(
     warnings: list[str] = []
     source = source_status()
     revision = source.get("revision")
+    source_root = source.get("root")
 
     if source.get("available") is not True or not revision:
         blockers.append("Git HEAD kunne ikke aflæses; release-gaten kræver et Git-checkout.")
     if source.get("dirty") is not False:
         blockers.append("Checkoutet er dirty; release-gaten kræver et clean checkout.")
+    if not source_root:
+        blockers.append("Checkout-root kunne ikke aflæses; release-gaten kræver en entydig checkout-identitet.")
 
     if validation.get("ok") is not True or validation.get("stage") != "complete":
         blockers.append("validation-report.json er ikke et komplet PASS.")
@@ -114,14 +129,20 @@ def evaluate_release(
     service_source = service.get("source") or {}
     if evidence.get("same_revision") is not True:
         blockers.append("VoiceRig-service og acceptance-checkout var ikke på samme revision.")
+    if evidence.get("same_root") is not True:
+        blockers.append("VoiceRig-service og acceptance-processen var ikke fra samme checkout-root.")
     if revision and checkout.get("revision") != revision:
         blockers.append("Acceptance-rapportens checkout revision matcher ikke nuværende Git HEAD.")
     if checkout.get("dirty") is not False:
         blockers.append("Acceptance-rapportens checkout var dirty.")
+    if source_root and not _same_path(checkout.get("root"), source_root):
+        blockers.append("Acceptance-rapportens checkout-root matcher ikke den nuværende release-checkout.")
     if revision and service_source.get("revision") != revision:
         blockers.append("Acceptance-rapportens aktive VoiceRig-service matcher ikke nuværende Git HEAD.")
     if service_source.get("dirty") is not False:
         blockers.append("Acceptance-rapportens VoiceRig-service kørte fra et dirty checkout.")
+    if source_root and not _same_path(service_source.get("root"), source_root):
+        blockers.append("Acceptance-rapportens aktive VoiceRig-service kom ikke fra den nuværende release-checkout.")
 
     voice = validation.get("voice") or {}
     if voice.get("diarization_used") is not True:
@@ -174,6 +195,8 @@ def evaluate_release(
         blockers.append("piper-fallback-report.json er ikke PASS.")
     if revision and fallback.get("checkout_revision") != revision:
         blockers.append("Piper fallback blev ikke testet på nuværende Git HEAD.")
+    if source_root and not _same_path(fallback.get("checkout_root"), source_root):
+        blockers.append("Piper fallback blev ikke kørt fra den nuværende release-checkout.")
 
     before = fallback.get("before") or {}
     if before.get("ok") is not True or before.get("provider") != "voicerig":
@@ -195,6 +218,8 @@ def evaluate_release(
         blockers.append("VoiceRig blev ikke dokumenteret genstartet efter Piper fallback-testen.")
     if revision and fallback.get("restarted_service_revision") != revision:
         blockers.append("Den genstartede VoiceRig-service matcher ikke nuværende Git HEAD.")
+    if source_root and not _same_path(fallback.get("restarted_service_root"), source_root):
+        blockers.append("Den genstartede VoiceRig-service kom ikke fra den nuværende release-checkout.")
     restored = fallback.get("restored") or {}
     if restored.get("ok") is not True or restored.get("provider") != "voicerig":
         blockers.append("ModelRig vendte ikke dokumenteret tilbage til VoiceRig efter fallback-testen.")

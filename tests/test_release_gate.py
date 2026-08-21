@@ -116,6 +116,23 @@ def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monke
     assert report["fallback"]["restored_package"] == "voice.mrvoice"
 
 
+def test_release_gate_rejects_machine_validation_fail_verdict(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
+    _stub_validators(monkeypatch)
+    validation, fallback = _evidence(tmp_path)
+    validation["ok"] = False
+
+    report = release_gate.evaluate_release(
+        validation,
+        fallback,
+        quality_pass=True,
+        quality_note="Alle manuelle checks er grønne; maskinrapportens FAIL skal stadig være autoritativ.",
+    )
+
+    assert report["ok"] is False
+    assert any("validation-report.json er ikke et komplet PASS" in blocker for blocker in report["blockers"])
+
+
 def test_release_gate_rejects_missing_manual_quality_pass(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
     _stub_validators(monkeypatch)
@@ -208,6 +225,23 @@ def test_release_gate_rejects_fallback_for_different_voice_package(monkeypatch, 
     assert report["ok"] is False
     assert any("starttilstand" in blocker for blocker in report["blockers"])
     assert any("vendte ModelRig ikke tilbage" in blocker for blocker in report["blockers"])
+
+
+def test_release_gate_rejects_fallback_that_does_not_restore_voicerig(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
+    _stub_validators(monkeypatch)
+    validation, fallback = _evidence(tmp_path)
+    fallback["restored"] = {"ok": True, "provider": "piper", "package": "voice.mrvoice"}
+
+    report = release_gate.evaluate_release(
+        validation,
+        fallback,
+        quality_pass=True,
+        quality_note="Fallback syntetiserede, men VoiceRig-provideren blev ikke genetableret.",
+    )
+
+    assert report["ok"] is False
+    assert any("vendte ikke dokumenteret tilbage til VoiceRig" in blocker for blocker in report["blockers"])
 
 
 def test_complete_acceptance_wrapper_requires_explicit_quality_acknowledgement():

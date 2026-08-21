@@ -13,8 +13,14 @@ def test_piper_fallback_script_is_fail_safe_and_restores_voicerig():
     assert "finally {" in text
     assert "Stop-Process -Id $StoppedPid -Force" in text
     assert "Start-Process -FilePath $VoiceRigExe" in text
-    assert "Wait-VoiceRigReady $CheckoutRevision" in text
+    assert "Wait-VoiceRigReady $CheckoutRevision $CheckoutRoot" in text
+    assert "$Initial.source.root" in text
+    assert "Test-SamePath ([string]$Initial.source.root) $CheckoutRoot" in text
+    assert 'Get-Process -Name "voicerig"' in text
+    assert "Test-SamePath $CandidatePath $VoiceRigExe" in text
+    assert "checkout_root = $CheckoutRoot" in text
     assert "restarted_service_revision" in text
+    assert "restarted_service_root" in text
     assert "Piper fallback acceptance: PASS" in text
 
 
@@ -50,3 +56,12 @@ def test_main_rig_validator_keeps_modelrig_token_off_python_command_line():
     assert "$env:MODELRIG_TOKEN = $ModelRigToken" in text
     assert "Remove-Item Env:MODELRIG_TOKEN" in text
     assert "finally {" in text
+
+
+def test_main_rig_validator_treats_validator_exit_code_as_data_on_powershell_51():
+    text = (ROOT / "validate-rig.ps1").read_text(encoding="utf-8")
+
+    assert "$PreviousErrorActionPreference = $ErrorActionPreference" in text
+    assert '$ErrorActionPreference = "Continue"' in text
+    assert "$Code = $LASTEXITCODE" in text
+    assert "$ErrorActionPreference = $PreviousErrorActionPreference" in text

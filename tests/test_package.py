@@ -4,6 +4,7 @@ import zipfile
 
 import pytest
 
+import voicerig.profiles.package as package_module
 from voicerig.profiles.package import build_package, validate_package
 
 
@@ -126,6 +127,26 @@ def test_rejects_zip_bomb_sized_reference_before_payload_read(tmp_path: Path):
         zf.writestr("reference.wav", b"\0" * (17 * 1024 * 1024))
     with pytest.raises(ValueError, match="reference.wav er for stor"):
         validate_package(package)
+
+
+def test_rejects_aggregate_uncompressed_size_over_global_limit():
+    sizes = {
+        "manifest.json": 1,
+        "checksums.json": 1,
+        "conditioning.pt": 64 * 1024 * 1024,
+        "reference.wav": 16 * 1024 * 1024,
+        "preview.wav": 16 * 1024 * 1024,
+        "references/candidate_01.wav": 16 * 1024 * 1024,
+        "references/candidate_02.wav": 16 * 1024 * 1024,
+    }
+    infos = []
+    for name, size in sizes.items():
+        info = zipfile.ZipInfo(name)
+        info.file_size = size
+        infos.append(info)
+
+    with pytest.raises(ValueError, match="for stor efter udpakning"):
+        package_module._validate_archive_shape(infos)
 
 
 def test_rejects_nonfinite_tts_default(tmp_path: Path):

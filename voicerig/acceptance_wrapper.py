@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,17 @@ def _arg_value(flag: str, default: str | None = None) -> str | None:
 
 def _has_source_args() -> bool:
     return "--source" in sys.argv[1:]
+
+
+def _same_path(left: object, right: object) -> bool:
+    if not isinstance(left, str) or not left.strip() or not isinstance(right, str) or not right.strip():
+        return False
+    try:
+        left_path = os.path.normcase(os.path.abspath(os.path.realpath(os.path.expanduser(left))))
+        right_path = os.path.normcase(os.path.abspath(os.path.realpath(os.path.expanduser(right))))
+    except (OSError, ValueError):
+        return False
+    return left_path == right_path
 
 
 def _service_identity(base_url: str) -> dict:
@@ -56,6 +68,7 @@ def collect_source_evidence(*, require_service: bool) -> tuple[dict, list[str]]:
         "checkout": checkout,
         "service": None,
         "same_revision": None,
+        "same_root": None,
     }
     blockers: list[str] = []
 
@@ -63,6 +76,8 @@ def collect_source_evidence(*, require_service: bool) -> tuple[dict, list[str]]:
         blockers.append("Git checkout-identiteten kunne ikke aflæses; acceptance kræver et Git-checkout.")
     elif checkout.get("dirty") is not False:
         blockers.append("VoiceRig-checkoutet har lokale ændringer; fysisk acceptance kræver et clean checkout.")
+    if not checkout.get("root"):
+        blockers.append("VoiceRig-checkoutets source.root kunne ikke aflæses.")
 
     if not require_service:
         return evidence, blockers
@@ -79,6 +94,8 @@ def collect_source_evidence(*, require_service: bool) -> tuple[dict, list[str]]:
         blockers.append("Den aktive VoiceRig-service rapporterer ikke en Git source revision.")
     if service_source.get("dirty") is not False:
         blockers.append("Den aktive VoiceRig-service kører fra et dirty checkout.")
+    if not service_source.get("root"):
+        blockers.append("Den aktive VoiceRig-service rapporterer ikke source.root.")
 
     checkout_revision = checkout.get("revision")
     service_revision = service_source.get("revision")
@@ -88,6 +105,14 @@ def collect_source_evidence(*, require_service: bool) -> tuple[dict, list[str]]:
         blockers.append(
             "Den aktive VoiceRig-service kører ikke samme Git HEAD som checkoutet "
             f"({service_revision or 'ukendt'} != {checkout_revision or 'ukendt'}). Kør setup-windows.ps1 igen."
+        )
+
+    same_root = _same_path(checkout.get("root"), service_source.get("root"))
+    evidence["same_root"] = same_root
+    if not same_root:
+        blockers.append(
+            "Den aktive VoiceRig-service kører ikke fra samme checkout-root som acceptance-processen. "
+            "Kør setup-windows.ps1 igen fra det checkout, der skal testes."
         )
 
     return evidence, blockers

@@ -48,7 +48,7 @@ if ($Source.Count -eq 0) {
     Write-Host "Kører preflight: clean Git checkout, CUDA, VRAM, FFmpeg, verificerede modeller og speaker-runtime."
 } else {
     Write-Host "Kører fuld produkt-E2E på $($Source.Count) mediefil(er)."
-    Write-Host "Acceptance kræver clean checkout og aktiv VoiceRig-service på samme Git HEAD."
+    Write-Host "Acceptance kræver clean checkout og aktiv VoiceRig-service fra samme checkout-root og startup Git HEAD."
     Write-Host "VoiceRig service: $VoiceRigUrl"
     if ($RequireModelRig) {
         Write-Host "ModelRig backend: $ModelRigUrl (Bearer-token kræves)"
@@ -61,11 +61,12 @@ if ($Source.Count -eq 0) {
 }
 Write-Host ""
 
-# Keep credentials out of the Python process command line. The validator already
-# reads MODELRIG_TOKEN from its inherited environment, so temporarily expose the
-# explicit PowerShell parameter there and restore the caller's environment even
-# when validation fails.
+# Keep credentials out of the Python process command line. Windows PowerShell
+# 5.1 also promotes native stderr to PowerShell error records. A validator is
+# allowed to return a non-zero exit code and explain the blocker on stderr, so
+# temporarily use Continue around the native process and capture LASTEXITCODE.
 $PreviousModelRigToken = $env:MODELRIG_TOKEN
+$PreviousErrorActionPreference = $ErrorActionPreference
 try {
     if ($ModelRigToken) {
         $env:MODELRIG_TOKEN = $ModelRigToken
@@ -73,9 +74,11 @@ try {
         Remove-Item Env:MODELRIG_TOKEN -ErrorAction SilentlyContinue
     }
 
+    $ErrorActionPreference = "Continue"
     & $Python @ArgsList
     $Code = $LASTEXITCODE
 } finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
     if ($null -eq $PreviousModelRigToken) {
         Remove-Item Env:MODELRIG_TOKEN -ErrorAction SilentlyContinue
     } else {

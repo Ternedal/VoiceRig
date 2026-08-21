@@ -13,6 +13,19 @@ function Refresh-ProcessPath {
     $env:Path = @($Machine, $User, $env:Path) -join ";"
 }
 
+function Test-SamePath([string]$Left, [string]$Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    try {
+        return [string]::Equals(
+            [System.IO.Path]::GetFullPath($Left).TrimEnd('\'),
+            [System.IO.Path]::GetFullPath($Right).TrimEnd('\'),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
+}
+
 function Test-Python311 {
     if (Get-Command py -ErrorAction SilentlyContinue) {
         & py -3.11 -c "import sys; assert sys.version_info[:2] == (3, 11)" 2>$null
@@ -105,6 +118,9 @@ function Restart-VoiceRigService([string]$Exe) {
     if ($Existing) {
         if ($Existing.ok -ne $true -or $Existing.service -ne "voicerig" -or -not $Existing.pid) {
             throw "Port 8765 svarer, men processen identificerer sig ikke sikkert som VoiceRig. Installationen stopper uden at røre processen."
+        }
+        if (-not $Existing.source -or -not $Existing.source.root -or -not (Test-SamePath ([string]$Existing.source.root) $PSScriptRoot)) {
+            throw "En VoiceRig-service fra en anden checkout svarer på port 8765. Installationen stopper uden at røre processen."
         }
         Stop-Process -Id ([int]$Existing.pid) -Force -ErrorAction Stop
         $Stopped = $false
@@ -203,16 +219,28 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if (-not $Health -or $Health.ok -ne $true) { throw "VoiceRig blev installeret, men den lokale service svarer ikke." }
 
+$ExpectedHead = (& git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $ExpectedHead) { throw "Kunne ikke aflæse Git HEAD efter installationen." }
+if (-not $Health.source -or -not $Health.source.root -or -not (Test-SamePath ([string]$Health.source.root) $PSScriptRoot)) {
+    throw "VoiceRig blev startet efter installationen, men den aktive service tilhører ikke denne checkout."
+}
+if ($Health.source.revision -ne $ExpectedHead -or $Health.source.dirty -ne $false) {
+    throw "VoiceRig blev startet efter installationen, men service-processens startup-identitet matcher ikke det clean installerede Git HEAD $ExpectedHead."
+}
+
 if (-not $SkipModelWarmup) {
     $Readiness = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/readiness" -TimeoutSec 5
     if ($Readiness.ready -ne $true) {
         $Reason = @($Readiness.blockers) -join "; "
         throw "Modellerne blev verificeret, men den kørende VoiceRig-service er ikke build-klar: $Reason"
     }
+    if (-not $Readiness.source -or $Readiness.source.revision -ne $ExpectedHead -or -not (Test-SamePath ([string]$Readiness.source.root) $PSScriptRoot)) {
+        throw "VoiceRig readiness kommer ikke fra den installerede service-identitet."
+    }
 }
 
 Write-Host ""
-Write-Host "VoiceRig er klar. Service PID $($Health.pid), version $($Health.version)."
+Write-Host "VoiceRig er klar. Service PID $($Health.pid), version $($Health.version), commit $($Health.source.revision)."
 if (-not $NoBrowser) {
     Start-Process "http://127.0.0.1:8765/"
 }

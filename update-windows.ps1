@@ -6,6 +6,19 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
 
+function Test-SamePath([string]$Left, [string]$Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    try {
+        return [string]::Equals(
+            [System.IO.Path]::GetFullPath($Left).TrimEnd('\'),
+            [System.IO.Path]::GetFullPath($Right).TrimEnd('\'),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
+}
+
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "Git mangler. Kør .\install-windows.ps1 først."
 }
@@ -62,8 +75,16 @@ try {
 }
 
 $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 5
-if (-not $Health -or $Health.ok -ne $true -or $Health.source.revision -ne $NewHead) {
-    throw "Opdateringen kørte færdig, men den aktive VoiceRig-service matcher ikke den nye Git revision $NewHead."
+if (
+    -not $Health -or
+    $Health.ok -ne $true -or
+    $Health.service -ne "voicerig" -or
+    -not $Health.source -or
+    $Health.source.revision -ne $NewHead -or
+    $Health.source.dirty -ne $false -or
+    -not (Test-SamePath ([string]$Health.source.root) $PSScriptRoot)
+) {
+    throw "Opdateringen kørte færdig, men den aktive VoiceRig-service matcher ikke den clean nye checkout-identitet $NewHead."
 }
 
-Write-Host "VoiceRig er opdateret og verificeret på $NewHead."
+Write-Host "VoiceRig er opdateret og verificeret på $NewHead fra denne checkout."

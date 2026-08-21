@@ -19,6 +19,24 @@ def test_local_env_fills_missing_values_without_overriding_session_env(tmp_path:
     assert config.os.environ["VOICERIG_TEST_NEW"] == "from-file"
 
 
+def test_local_env_normalizes_empty_hf_token_to_anonymous_access(tmp_path: Path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("HF_TOKEN=\n", encoding="utf-8")
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+
+    assert config.load_local_env(dotenv) is True
+    assert "HF_TOKEN" not in config.os.environ
+
+
+def test_local_env_preserves_real_session_hf_token_over_empty_file_value(tmp_path: Path, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("HF_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setenv("HF_TOKEN", "hf_session_token")
+
+    assert config.load_local_env(dotenv) is True
+    assert config.os.environ["HF_TOKEN"] == "hf_session_token"
+
+
 def test_local_env_missing_file_is_a_noop(tmp_path: Path):
     assert config.load_local_env(tmp_path / "missing.env") is False
 

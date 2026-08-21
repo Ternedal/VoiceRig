@@ -10,11 +10,26 @@ def _write(path: Path, payload: bytes = b"RIFF" + b"x" * 128) -> str:
     return str(path)
 
 
+def _root(tmp_path: Path) -> str:
+    return str((tmp_path / "checkout").resolve())
+
+
+def _source(tmp_path: Path, revision: str = "abc123") -> dict:
+    return {
+        "available": True,
+        "revision": revision,
+        "dirty": False,
+        "branch": "agent/voicerig-mvp",
+        "root": _root(tmp_path),
+    }
+
+
 def _evidence(tmp_path: Path) -> tuple[dict, dict]:
     package = _write(tmp_path / "voice.mrvoice", b"package")
     reference = _write(tmp_path / "voice-reference.wav")
     validation_wav = _write(tmp_path / "voice-validation.wav")
     piper_wav = _write(tmp_path / "piper-fallback.wav")
+    root = _root(tmp_path)
 
     validation = {
         "ok": True,
@@ -22,8 +37,9 @@ def _evidence(tmp_path: Path) -> tuple[dict, dict]:
         "blockers": [],
         "source_evidence": {
             "same_revision": True,
-            "checkout": {"revision": "abc123", "dirty": False},
-            "service": {"source": {"revision": "abc123", "dirty": False}},
+            "same_root": True,
+            "checkout": {"revision": "abc123", "dirty": False, "root": root},
+            "service": {"source": {"revision": "abc123", "dirty": False, "root": root}},
         },
         "preflight": {"readiness": {"hardware": {"vram_total_gb": 12.0}}},
         "voice": {
@@ -51,11 +67,13 @@ def _evidence(tmp_path: Path) -> tuple[dict, dict]:
     fallback = {
         "ok": True,
         "checkout_revision": "abc123",
+        "checkout_root": root,
         "before": {"ok": True, "provider": "voicerig", "package": "voice.mrvoice"},
         "fallback": {"ok": True, "provider": "piper"},
         "piper_synthesis": {"provider": "piper", "riff": True, "output": piper_wav},
         "restarted": True,
         "restarted_service_revision": "abc123",
+        "restarted_service_root": root,
         "restored": {"ok": True, "provider": "voicerig", "package": "voice.mrvoice"},
     }
     return validation, fallback
@@ -75,11 +93,7 @@ def _stub_validators(monkeypatch):
 
 
 def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        release_gate,
-        "source_status",
-        lambda: {"available": True, "revision": "abc123", "dirty": False, "branch": "agent/voicerig-mvp"},
-    )
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
     _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
 
@@ -103,11 +117,7 @@ def test_release_gate_passes_only_with_complete_machine_and_human_evidence(monke
 
 
 def test_release_gate_rejects_missing_manual_quality_pass(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        release_gate,
-        "source_status",
-        lambda: {"available": True, "revision": "abc123", "dirty": False},
-    )
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
     _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
 
@@ -118,11 +128,7 @@ def test_release_gate_rejects_missing_manual_quality_pass(monkeypatch, tmp_path:
 
 
 def test_release_gate_rejects_stale_revision_and_missing_artifact(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        release_gate,
-        "source_status",
-        lambda: {"available": True, "revision": "new-head", "dirty": False},
-    )
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path, "new-head"))
     _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
     Path(validation["voice"]["validation_wav"]).unlink()
@@ -139,12 +145,29 @@ def test_release_gate_rejects_stale_revision_and_missing_artifact(monkeypatch, t
     assert any("validation WAV" in blocker for blocker in report["blockers"])
 
 
-def test_release_gate_rejects_artifact_that_changed_after_machine_pass(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        release_gate,
-        "source_status",
-        lambda: {"available": True, "revision": "abc123", "dirty": False},
+def test_release_gate_rejects_same_revision_from_different_checkout(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
+    _stub_validators(monkeypatch)
+    validation, fallback = _evidence(tmp_path)
+    foreign = str((tmp_path / "foreign-checkout").resolve())
+    validation["source_evidence"]["same_root"] = False
+    validation["source_evidence"]["service"]["source"]["root"] = foreign
+    fallback["checkout_root"] = foreign
+    fallback["restarted_service_root"] = foreign
+
+    report = release_gate.evaluate_release(
+        validation,
+        fallback,
+        quality_pass=True,
+        quality_note="Lyden er manuelt vurderet.",
     )
+
+    assert report["ok"] is False
+    assert any("checkout-root" in blocker or "release-checkout" in blocker for blocker in report["blockers"])
+
+
+def test_release_gate_rejects_artifact_that_changed_after_machine_pass(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
     validation, fallback = _evidence(tmp_path)
 
     def broken_package(path):
@@ -169,11 +192,7 @@ def test_release_gate_rejects_artifact_that_changed_after_machine_pass(monkeypat
 
 
 def test_release_gate_rejects_fallback_for_different_voice_package(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(
-        release_gate,
-        "source_status",
-        lambda: {"available": True, "revision": "abc123", "dirty": False},
-    )
+    monkeypatch.setattr(release_gate, "source_status", lambda: _source(tmp_path))
     _stub_validators(monkeypatch)
     validation, fallback = _evidence(tmp_path)
     fallback["before"]["package"] = "other.mrvoice"

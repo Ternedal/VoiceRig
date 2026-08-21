@@ -15,6 +15,98 @@ function Get-VoiceRigHealth {
     }
 }
 
+function Get-ProcessExecutablePath($Process) {
+    try {
+        if ($Process.Path) { return [string]$Process.Path }
+    } catch {
+        # Fall back to CIM below.
+    }
+    try {
+        $Cim = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction Stop
+        if ($Cim -and $Cim.ExecutablePath) { return [string]$Cim.ExecutablePath }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+function Test-SamePath([string]$Left, [string]$Right) {
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) { return $false }
+    try {
+        return [string]::Equals(
+            [System.IO.Path]::GetFullPath($Left).TrimEnd('\'),
+            [System.IO.Path]::GetFullPath($Right).TrimEnd('\'),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Stop-CurrentCheckoutVoiceRig {
+    $LocalExe = Join-Path $PSScriptRoot ".venv\Scripts\voicerig.exe"
+    $LocalPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+    $StoppedIds = @{}
+
+    $Health = Get-VoiceRigHealth
+    if ($Health) {
+        if ($Health.ok -ne $true -or $Health.service -ne "voicerig" -or -not $Health.pid) {
+            Write-Warning "Port 8765 svarer, men er ikke en sikkert identificeret VoiceRig. Processen røres ikke."
+        } else {
+            $HealthPid = [int]$Health.pid
+            $SameCheckout = $false
+            if ($Health.source -and $Health.source.root) {
+                $SameCheckout = Test-SamePath ([string]$Health.source.root) $PSScriptRoot
+            } elseif ((Test-Path -LiteralPath $LocalExe) -or (Test-Path -LiteralPath $LocalPython)) {
+                # Legacy bridge for RC2-RC6, which did not expose source.root.
+                try {
+                    $HealthProcess = Get-Process -Id $HealthPid -ErrorAction Stop
+                    $HealthPath = Get-ProcessExecutablePath $HealthProcess
+                    $SameCheckout = (Test-SamePath $HealthPath $LocalExe) -or (Test-SamePath $HealthPath $LocalPython)
+                } catch {
+                    $SameCheckout = $false
+                }
+            }
+
+            if ($SameCheckout) {
+                if ($HealthPid -ne $PID) {
+                    Write-Host "Stopper VoiceRig-service fra denne checkout, PID $HealthPid..."
+                    Stop-Process -Id $HealthPid -Force -ErrorAction Stop
+                    $StoppedIds[$HealthPid] = $true
+                }
+            } else {
+                Write-Warning "En VoiceRig-service fra en anden checkout kører på port 8765. Den røres ikke af denne uninstall."
+            }
+        }
+    }
+
+    # A distlib launcher can survive after its Python child is stopped and keep
+    # voicerig.exe locked. Remove only the launcher belonging to this checkout.
+    foreach ($Candidate in @(Get-Process -Name "voicerig" -ErrorAction SilentlyContinue)) {
+        if ($StoppedIds.ContainsKey([int]$Candidate.Id)) { continue }
+        $CandidatePath = Get-ProcessExecutablePath $Candidate
+        if (Test-SamePath $CandidatePath $LocalExe) {
+            Write-Host "Stopper lokal VoiceRig-launcher PID $($Candidate.Id)..."
+            Stop-Process -Id ([int]$Candidate.Id) -Force -ErrorAction Stop
+            $StoppedIds[[int]$Candidate.Id] = $true
+        }
+    }
+
+    foreach ($StoppedPid in @($StoppedIds.Keys)) {
+        $Exited = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            if (-not (Get-Process -Id ([int]$StoppedPid) -ErrorAction SilentlyContinue)) {
+                $Exited = $true
+                break
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $Exited) {
+            throw "VoiceRig-proces PID $StoppedPid stoppede ikke inden for 10 sekunder; runtime-filerne slettes ikke."
+        }
+    }
+}
+
 function Get-VoiceRigDataRoot {
     # Resolve storage through VoiceRig itself before deleting .venv. This honors
     # .env, legacy migration and future config rules instead of duplicating them
@@ -73,14 +165,7 @@ if ($RemoveData) {
     $DataRoot = Get-VoiceRigDataRoot
 }
 
-$Health = Get-VoiceRigHealth
-if ($Health -and $Health.ok -eq $true -and $Health.service -eq "voicerig" -and $Health.pid) {
-    $VoiceRigPid = [int]$Health.pid
-    if ($VoiceRigPid -ne $PID) {
-        Write-Host "Stopper VoiceRig service PID $VoiceRigPid..."
-        Stop-Process -Id $VoiceRigPid -Force -ErrorAction Stop
-    }
-}
+Stop-CurrentCheckoutVoiceRig
 
 & (Join-Path $PSScriptRoot "uninstall-autostart.ps1")
 
@@ -112,4 +197,4 @@ if ($RemoveData) {
     Write-Host "Brugerdata og stemmeprofiler er bevaret. Brug -RemoveData hvis de også skal slettes."
 }
 
-Write-Host "VoiceRig runtime og autostart er fjernet. Repo-filerne er ikke slettet."
+Write-Host "VoiceRig runtime og denne checkouts autostart er fjernet. Repo-filerne er ikke slettet."

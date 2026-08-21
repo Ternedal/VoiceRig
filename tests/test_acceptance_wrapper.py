@@ -7,18 +7,19 @@ from pathlib import Path
 import voicerig.acceptance_wrapper as acceptance
 
 
-def _clean_source(revision: str = "a" * 40) -> dict:
+def _clean_source(revision: str = "a" * 40, root: str = "/tmp/voicerig") -> dict:
     return {
         "revision": revision,
         "branch": "agent/voicerig-mvp",
         "dirty": False,
         "available": True,
+        "root": root,
     }
 
 
 def test_dirty_checkout_fails_before_physical_validator(tmp_path: Path, monkeypatch):
     report = tmp_path / "report.json"
-    source = _clean_source()
+    source = _clean_source(root=str(tmp_path / "checkout"))
     source["dirty"] = True
     monkeypatch.setattr(acceptance, "source_status", lambda: source)
     monkeypatch.setattr(sys, "argv", ["acceptance", "--report", str(report)])
@@ -41,7 +42,8 @@ def test_dirty_checkout_fails_before_physical_validator(tmp_path: Path, monkeypa
 
 def test_full_e2e_rejects_service_running_different_revision(tmp_path: Path, monkeypatch):
     report = tmp_path / "report.json"
-    checkout = _clean_source("a" * 40)
+    root = str(tmp_path / "checkout")
+    checkout = _clean_source("a" * 40, root=root)
     monkeypatch.setattr(acceptance, "source_status", lambda: checkout)
     monkeypatch.setattr(
         sys,
@@ -72,6 +74,7 @@ def test_full_e2e_rejects_service_running_different_revision(tmp_path: Path, mon
                     "branch": "agent/voicerig-mvp",
                     "dirty": False,
                     "available": True,
+                    "root": root,
                 },
             }
 
@@ -85,13 +88,67 @@ def test_full_e2e_rejects_service_running_different_revision(tmp_path: Path, mon
     assert acceptance.main() == 1
     payload = json.loads(report.read_text(encoding="utf-8"))
     assert payload["source_evidence"]["same_revision"] is False
+    assert payload["source_evidence"]["same_root"] is True
     assert any("samme Git HEAD" in item for item in payload["blockers"])
+
+
+def test_full_e2e_rejects_same_revision_from_different_checkout(tmp_path: Path, monkeypatch):
+    report = tmp_path / "report.json"
+    revision = "d" * 40
+    checkout = _clean_source(revision, root=str(tmp_path / "checkout-a"))
+    monkeypatch.setattr(acceptance, "source_status", lambda: checkout)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "acceptance",
+            "--source",
+            "voice.wav",
+            "--voicerig-url",
+            "http://127.0.0.1:8765",
+            "--report",
+            str(report),
+        ],
+    )
+
+    class Response:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {
+                "ready": True,
+                "pid": 321,
+                "source": {
+                    "revision": revision,
+                    "branch": "agent/voicerig-mvp",
+                    "dirty": False,
+                    "available": True,
+                    "root": str(tmp_path / "checkout-b"),
+                },
+            }
+
+    monkeypatch.setattr(acceptance.httpx, "get", lambda _url, timeout: Response())
+    monkeypatch.setattr(
+        acceptance.rig_validation,
+        "main",
+        lambda: (_ for _ in ()).throw(AssertionError("inner validator must not run")),
+    )
+
+    assert acceptance.main() == 1
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["source_evidence"]["same_revision"] is True
+    assert payload["source_evidence"]["same_root"] is False
+    assert any("samme checkout-root" in item for item in payload["blockers"])
 
 
 def test_clean_full_e2e_augments_normal_report_with_source_evidence(tmp_path: Path, monkeypatch):
     report = tmp_path / "report.json"
     revision = "c" * 40
-    checkout = _clean_source(revision)
+    root = str(tmp_path / "checkout")
+    checkout = _clean_source(revision, root=root)
     monkeypatch.setattr(acceptance, "source_status", lambda: checkout)
     monkeypatch.setattr(
         sys,
@@ -122,6 +179,7 @@ def test_clean_full_e2e_augments_normal_report_with_source_evidence(tmp_path: Pa
                     "branch": "agent/voicerig-mvp",
                     "dirty": False,
                     "available": True,
+                    "root": root,
                 },
             }
 
@@ -140,3 +198,4 @@ def test_clean_full_e2e_augments_normal_report_with_source_evidence(tmp_path: Pa
     assert evidence["service"]["pid"] == 456
     assert evidence["service"]["source"]["revision"] == revision
     assert evidence["same_revision"] is True
+    assert evidence["same_root"] is True

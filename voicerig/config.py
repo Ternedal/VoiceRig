@@ -12,6 +12,21 @@ _LEGACY_DATA_DIR_ENV_VALUES = {"voicerig-data", "./voicerig-data"}
 _LOCAL_SECRET_KEYS = {"MODELRIG_TOKEN"}
 
 
+def _normalize_optional_hf_token() -> None:
+    """Treat an empty HF_TOKEN as absent instead of an invalid bearer token.
+
+    ``python-dotenv`` intentionally loads ``HF_TOKEN=`` as the empty string.
+    Hugging Face clients normally interpret a missing token as anonymous access,
+    but some downstream callers pass the raw environment value explicitly and
+    therefore turn the empty string into the invalid HTTP header ``Bearer ``.
+    Normalize only empty/whitespace values; a real session or .env token remains
+    untouched.
+    """
+    token = os.getenv("HF_TOKEN")
+    if token is not None and not token.strip():
+        os.environ.pop("HF_TOKEN", None)
+
+
 def load_local_env(path: Path | None = None) -> bool:
     """Load VoiceRig's repo-local .env without overriding real environment vars.
 
@@ -21,9 +36,11 @@ def load_local_env(path: Path | None = None) -> bool:
     pyannote subprocess inherits the same token/configuration automatically.
     """
     dotenv_path = (path or (_REPO_ROOT / ".env")).expanduser().resolve()
-    if not dotenv_path.is_file():
-        return False
-    return bool(load_dotenv(dotenv_path=dotenv_path, override=False))
+    loaded = False
+    if dotenv_path.is_file():
+        loaded = bool(load_dotenv(dotenv_path=dotenv_path, override=False))
+    _normalize_optional_hf_token()
+    return loaded
 
 
 load_local_env()

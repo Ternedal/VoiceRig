@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from voicerig.config import data_dir
+from voicerig.engines.catalog import package_compatibility
 from voicerig.modelrig.client import install_local
 from voicerig.profiles.package import slugify, validate_package
 
@@ -89,6 +90,11 @@ def _voice_record(name: str, locations: dict[str, Path], default_name: str | Non
             "model": engine.get("model"),
             "revision": engine.get("revision"),
         },
+        # Additive API metadata only: no package mutation or implicit migration.
+        # The UI/runtime can explain whether a voice is immediately runnable or
+        # can be rebuilt from its authoritative reference.wav after an engine
+        # change.
+        "compatibility": package_compatibility(manifest),
         "preview_url": f"/api/voices/{name}/preview",
         "download_url": f"/api/packages/{name}",
     }

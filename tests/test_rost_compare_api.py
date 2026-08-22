@@ -53,9 +53,11 @@ def test_rost_compare_uses_private_package_reference_without_mutating_profile(mo
 
     assert response.status_code == 200
     assert response.content == b"RIFF-rost-output"
+    assert response.headers["X-VoiceRig-Engine"] == "Roest v3 Chatterbox 500M"
     assert response.headers["X-VoiceRig-Model"] == ROST_DANISH_MODEL
     assert response.headers["X-VoiceRig-Revision"] == ROST_DANISH_REVISION
     assert response.headers["X-VoiceRig-Language"] == "da"
+    assert all(ord(ch) < 128 for ch in response.headers["X-VoiceRig-Engine"])
     assert captured["reference"] == b"RIFF-private-reference"
     assert captured["text"] == "Rødgrød med fløde."
     assert package.read_bytes() == before

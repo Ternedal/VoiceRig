@@ -36,15 +36,23 @@ def test_javascript_uses_secret_safe_modelrig_configuration_contract():
     assert "state.modelrigToken" not in javascript
 
 
-def test_reference_flow_exposes_real_auditions_and_twenty_file_limit():
+def test_reference_flow_exposes_real_auditions_and_additive_twenty_file_selection():
     javascript = (UI_DIR / "reference-flow.js").read_text(encoding="utf-8")
 
     assert "MAX_UI_FILES = 20" in javascript
     assert "job.state === 'needs_reference'" in javascript
     assert "reference.preview_wav_base64" in javascript
+    assert "reference.source_clip_count" in javascript
+    assert "samlet fra ${sourceCount} klip" in javascript
     assert "Brug denne reference" in javascript
     assert "/reference`" in javascript
     assert "resumeReferenceJob" in javascript
+    assert "function addFiles(files)" in javascript
+    assert "const merged = [...state.files]" in javascript
+    assert "fileIdentity" in javascript
+    assert "picker.value = ''" in javascript
+    assert "stopImmediatePropagation" in javascript
+    assert "filer valgt" in javascript
 
 
 def test_reference_flow_javascript_parses_when_node_is_available():

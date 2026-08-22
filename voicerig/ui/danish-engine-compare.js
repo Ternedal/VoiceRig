@@ -46,7 +46,7 @@
     panel.hidden = false;
     button.disabled = true;
     synthesizeVoiceButton.disabled = true;
-    status.textContent = 'Starter Røst v3. Første gang hentes ca. 5,4 GB modeldata lokalt; derefter bruges cache…';
+    status.textContent = 'Starter Røst v3. Første gang hentes ca. 3,2 GB nødvendige modeldata lokalt; derefter bruges cache…';
     try {
       const response = await fetch('/api/tts/compare/rost', {
         method: 'POST',

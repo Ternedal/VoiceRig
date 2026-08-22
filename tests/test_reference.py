@@ -68,3 +68,18 @@ def test_backup_references_prefer_diverse_non_duplicate_windows(tmp_path: Path):
             b0, b1 = other.start, other.start + other.duration
             overlap = max(0.0, min(a1, b1) - max(a0, b0))
             assert overlap / min(candidate.duration, other.duration) <= 0.5 + 1e-9
+
+
+def test_multiple_source_files_are_represented_before_extra_windows(tmp_path: Path):
+    first = tmp_path / "first.wav"
+    second = tmp_path / "second.wav"
+    third = tmp_path / "third.wav"
+    make_tone(first, seconds=30.0)
+    make_tone(second, seconds=12.0)
+    make_tone(third, seconds=12.0)
+
+    ranked = rank_references([first, second, third], limit=4)
+
+    assert len(ranked) == 4
+    assert {candidate.source for candidate in ranked[:3]} == {first, second, third}
+    assert ranked[3].source in {first, second, third}

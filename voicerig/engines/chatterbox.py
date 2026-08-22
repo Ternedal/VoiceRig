@@ -117,6 +117,12 @@ def _shared_model(
         if resident is not None and resident[0] == key:
             return resident[1]
         if resident is not None:
+            # Drop this local tuple reference before _release_device_model()
+            # pops the cache entry. Otherwise the old model object remains
+            # strongly referenced through `resident` while gc.collect() and
+            # torch.cuda.empty_cache() run, so VRAM may still be occupied when
+            # the replacement checkpoint starts loading on a 12 GB card.
+            del resident
             _release_device_model(device)
         model = _load_model(model_name, revision, device)
         _MODELS[device] = (key, model)

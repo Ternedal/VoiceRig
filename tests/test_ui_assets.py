@@ -1,5 +1,8 @@
 from pathlib import Path
+import shutil
+import subprocess
 
+import pytest
 from fastapi.responses import FileResponse
 
 from voicerig.app import ops_api
@@ -42,6 +45,18 @@ def test_reference_flow_exposes_real_auditions_and_twenty_file_limit():
     assert "Brug denne reference" in javascript
     assert "/reference`" in javascript
     assert "resumeReferenceJob" in javascript
+
+
+def test_reference_flow_javascript_parses_when_node_is_available():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed in this test environment")
+    subprocess.run(
+        [node, "--check", str(UI_DIR / "reference-flow.js")],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_ui_asset_routes_are_fixed_files():

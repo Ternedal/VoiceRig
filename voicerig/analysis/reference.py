@@ -9,6 +9,9 @@ from pathlib import Path
 from .diarization import Segment
 
 
+SourcePart = tuple[Path, float, float]
+
+
 @dataclass(frozen=True)
 class ReferenceCandidate:
     source: Path
@@ -17,6 +20,7 @@ class ReferenceCandidate:
     score: float
     speaker: str | None = None
     parts: tuple[tuple[float, float], ...] = ()
+    source_parts: tuple[SourcePart, ...] = ()
 
 
 def wav_duration(path: Path) -> float:
@@ -132,24 +136,126 @@ def _all_candidates(
     return candidates
 
 
-def _candidate_parts(candidate: ReferenceCandidate) -> tuple[tuple[float, float], ...]:
-    return candidate.parts or ((candidate.start, candidate.duration),)
+def _pooled_candidates(
+    diarizations: dict[Path, list[Segment]],
+    target_s: float,
+    limit: int,
+) -> list[ReferenceCandidate]:
+    """Build non-overlapping reference candidates from short turns across files.
+
+    The diarization mapping already contains only the selected speaker's turns.
+    Pooling therefore lets several short clean uploads contribute to Chatterbox
+    without reintroducing speech from other speakers. We only pool when at least
+    5.5 seconds of selected-speaker speech exists in total.
+    """
+    pieces: list[dict] = []
+    for wav, segments in diarizations.items():
+        for seg in segments:
+            if seg.duration < 0.8:
+                continue
+            pieces.append(
+                {
+                    "source": wav,
+                    "start": float(seg.start),
+                    "duration": float(seg.duration),
+                    "quality": float(_window_quality(wav, seg.start, seg.duration)),
+                }
+            )
+
+    total_s = sum(piece["duration"] for piece in pieces)
+    bundle_count = min(max(1, int(limit)), int(total_s // 5.5))
+    if not pieces or bundle_count < 1:
+        return []
+
+    # Divide the available clean speech fairly enough that 11 seconds can form
+    # two useful auditions instead of one 10-second audition plus an unusable
+    # one-second remainder.
+    bundle_target = min(float(target_s), total_s / bundle_count)
+    available = [dict(piece) for piece in sorted(pieces, key=lambda item: item["quality"], reverse=True)]
+    candidates: list[ReferenceCandidate] = []
+
+    for _bundle_index in range(bundle_count):
+        remaining = bundle_target
+        chosen: list[tuple[Path, float, float, float]] = []
+        used_sources: set[Path] = set()
+
+        # First pass prefers contributions from different source files. Cap each
+        # source at half the target while diversity is possible.
+        while remaining > 0.05:
+            options = [
+                piece for piece in available
+                if piece["duration"] >= 0.4 and piece["source"] not in used_sources
+            ]
+            if not options:
+                break
+            piece = max(options, key=lambda item: item["quality"])
+            take_cap = max(0.8, bundle_target / 2.0)
+            take = min(piece["duration"], remaining, take_cap)
+            if take < 0.4:
+                break
+            chosen.append((piece["source"], piece["start"], take, piece["quality"]))
+            used_sources.add(piece["source"])
+            piece["start"] += take
+            piece["duration"] -= take
+            remaining -= take
+
+        # Then fill the rest with the best remaining clean speech, even if it
+        # comes from a source already represented in this bundle.
+        while remaining > 0.05:
+            options = [piece for piece in available if piece["duration"] >= 0.4]
+            if not options:
+                break
+            piece = max(options, key=lambda item: item["quality"])
+            take = min(piece["duration"], remaining)
+            if take < 0.4:
+                break
+            chosen.append((piece["source"], piece["start"], take, piece["quality"]))
+            piece["start"] += take
+            piece["duration"] -= take
+            remaining -= take
+
+        duration = sum(part[2] for part in chosen)
+        if duration < 5.5:
+            break
+        weighted_quality = sum(part[2] * part[3] for part in chosen) / duration
+        stitch_penalty = 0.97 if len(chosen) > 1 else 1.0
+        score = weighted_quality * min(1.0, duration / target_s) * stitch_penalty
+        source_parts = tuple((part[0], part[1], part[2]) for part in chosen)
+        candidates.append(
+            ReferenceCandidate(
+                source=source_parts[0][0],
+                start=source_parts[0][1],
+                duration=duration,
+                score=round(score, 4),
+                speaker="pooled",
+                source_parts=source_parts,
+            )
+        )
+
+    return candidates
+
+
+def _candidate_source_parts(candidate: ReferenceCandidate) -> tuple[SourcePart, ...]:
+    if candidate.source_parts:
+        return candidate.source_parts
+    parts = candidate.parts or ((candidate.start, candidate.duration),)
+    return tuple((candidate.source, start, duration) for start, duration in parts)
 
 
 def _overlap_ratio(a: ReferenceCandidate, b: ReferenceCandidate) -> float:
-    if a.source != b.source:
-        return 0.0
-    parts_a = _candidate_parts(a)
-    parts_b = _candidate_parts(b)
+    parts_a = _candidate_source_parts(a)
+    parts_b = _candidate_source_parts(b)
     overlap = 0.0
-    for start_a, duration_a in parts_a:
+    for source_a, start_a, duration_a in parts_a:
         end_a = start_a + duration_a
-        for start_b, duration_b in parts_b:
+        for source_b, start_b, duration_b in parts_b:
+            if source_a != source_b:
+                continue
             end_b = start_b + duration_b
             overlap += max(0.0, min(end_a, end_b) - max(start_a, start_b))
     denominator = min(
-        sum(duration for _start, duration in parts_a),
-        sum(duration for _start, duration in parts_b),
+        sum(duration for _source, _start, duration in parts_a),
+        sum(duration for _source, _start, duration in parts_b),
     )
     return overlap / denominator if denominator > 0.0 else 1.0
 
@@ -163,23 +269,26 @@ def rank_references(
 ) -> list[ReferenceCandidate]:
     """Return strong, non-duplicate references while preferring source diversity.
 
-    When users provide multiple clips, the first pass takes at most one candidate
-    from each source file. A second pass then fills any remaining slots with the
-    best non-overlapping windows. This makes additional uploads materially useful
-    instead of allowing one long/high-level clip to monopolize every audition.
+    First prefer one self-contained reference from each source file. If short
+    selected-speaker turns across several files do not individually reach the
+    minimum reference duration, add pooled cross-file candidates before filling
+    remaining slots with extra windows from already represented files.
     """
+    diarized = diarizations or {}
     candidates = sorted(
-        _all_candidates(wavs, diarizations or {}, target_s),
+        _all_candidates(wavs, diarized, target_s),
         key=lambda item: item.score,
         reverse=True,
     )
-    if not candidates:
+    pooled = _pooled_candidates(diarized, target_s, limit)
+    if not candidates and not pooled:
         raise ValueError("Der er for lidt brugbar tale. Tilføj mindst ca. 6-10 sekunders tydelig tale.")
 
     wanted = max(1, limit)
     selected: list[ReferenceCandidate] = []
     used_sources: set[Path] = set()
 
+    # Strongest self-contained candidate from each file first.
     for candidate in candidates:
         if candidate.source in used_sources:
             continue
@@ -189,6 +298,16 @@ def rank_references(
         if len(selected) >= wanted:
             return selected
 
+    # Then use pooled clean speech across files. This is the important fallback
+    # for users who provide many short but individually sub-5.5-second clips.
+    for candidate in pooled:
+        if all(_overlap_ratio(candidate, existing) <= max_overlap_ratio for existing in selected):
+            selected.append(candidate)
+        if len(selected) >= wanted:
+            return selected
+
+    # Finally fill any remaining slots with diverse windows from sources already
+    # represented above.
     for candidate in candidates:
         if candidate in selected:
             continue
@@ -196,7 +315,7 @@ def rank_references(
             selected.append(candidate)
         if len(selected) >= wanted:
             break
-    return selected or [candidates[0]]
+    return selected or pooled[:1] or [candidates[0]]
 
 
 def select_reference(

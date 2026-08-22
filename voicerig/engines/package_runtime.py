@@ -7,17 +7,13 @@ import zipfile
 from pathlib import Path
 
 from voicerig.config import data_dir
+from voicerig.engines.catalog import CURRENT_ENGINE, package_compatibility
 from voicerig.engines.chatterbox import (
     _MODEL_RUN_LOCK,
     _conditioning_key,
     _save_pcm16,
     _set_conditioning_key,
     _shared_model,
-)
-from voicerig.model_contract import (
-    CHATTERBOX_ENGINE,
-    CHATTERBOX_MODEL,
-    CHATTERBOX_SOURCE_REVISION,
 )
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import chatterbox_device
@@ -96,10 +92,9 @@ def _materialize(package: Path, manifest: dict) -> Path:
 
 def _runtime_engine(manifest: dict) -> dict:
     engine = manifest.get("engine") or {}
-    if engine.get("name") != CHATTERBOX_ENGINE or engine.get("model") != CHATTERBOX_MODEL:
-        raise RuntimeError(
-            f"Denne VoiceRig-runtime understøtter kun {CHATTERBOX_ENGINE}/{CHATTERBOX_MODEL}."
-        )
+    compatibility = package_compatibility(manifest)
+    if not compatibility["runtime_supported"]:
+        raise RuntimeError(compatibility["detail"])
     return engine
 
 
@@ -127,7 +122,7 @@ def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> N
         # `conditioning.pt` is a serialized model-specific optimization. Only
         # load it directly when the package records the exact source revision
         # running now. Older/future packages remain portable via reference.wav.
-        can_load_serialized = engine.get("revision") == CHATTERBOX_SOURCE_REVISION
+        can_load_serialized = engine.get("revision") == CURRENT_ENGINE.revision
         if can_load_serialized:
             try:
                 from chatterbox.mtl_tts import Conditionals
@@ -158,7 +153,7 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
     # checkpoint to Røst, so a concurrent package call must not retain a model
     # object that is being evicted from the GPU.
     with _MODEL_RUN_LOCK:
-        model = _shared_model()
+        model = _shared_model(CURRENT_ENGINE.model, CURRENT_ENGINE.revision)
         _ensure_conditioning(model, package, manifest, device)
         wav = model.generate(
             text,

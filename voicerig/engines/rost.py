@@ -48,8 +48,11 @@ def synthesize_rost_danish(reference_wav: Path, text: str, output: Path) -> dict
     except Exception as exc:  # pragma: no cover - heavyweight optional dependency
         raise ChatterboxUnavailable("torchaudio mangler i Chatterbox-installationen.") from exc
 
-    model = _shared_model(ROST_DANISH_MODEL, ROST_DANISH_REVISION)
+    # Model selection and generation share one lock. Switching from the current
+    # general V3 checkpoint to Røst evicts the old GPU model, so no concurrent
+    # package synthesis may keep using that object while it is being replaced.
     with _MODEL_RUN_LOCK:
+        model = _shared_model(ROST_DANISH_MODEL, ROST_DANISH_REVISION)
         model.prepare_conditionals(
             str(reference_wav),
             exaggeration=DEFAULT_TTS_EXAGGERATION,

@@ -23,7 +23,12 @@ from voicerig.analysis.reference import ReferenceCandidate, rank_references
 from voicerig.config import allow_undiarized_fallback
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.media.audio import validate_wav
-from voicerig.media.ffmpeg import cut_wav, extract_mono_wav, stitch_wav_segments
+from voicerig.media.ffmpeg import (
+    cut_wav,
+    extract_mono_wav,
+    stitch_wav_segments,
+    stitch_wav_sources,
+)
 from voicerig.profiles.package import build_package, slugify
 
 
@@ -170,12 +175,20 @@ def _speaker_choices(
 
 
 def _materialize_reference(candidate: ReferenceCandidate, target: Path) -> Path:
-    if candidate.parts:
+    if candidate.source_parts:
+        stitch_wav_sources(list(candidate.source_parts), target)
+    elif candidate.parts:
         stitch_wav_segments(candidate.source, target, list(candidate.parts))
     else:
         cut_wav(candidate.source, target, candidate.start, candidate.duration)
     validate_wav(target, min_duration_s=5.4, max_duration_s=11.5, require_audible=True)
     return target
+
+
+def _reference_source_count(candidate: ReferenceCandidate) -> int:
+    if candidate.source_parts:
+        return len({source for source, _start, _duration in candidate.source_parts})
+    return 1
 
 
 def _reference_choices(
@@ -212,6 +225,7 @@ def _reference_choices(
                 "label": f"Reference {idx}",
                 "quality_score": round(float(candidate.score), 4),
                 "reference_seconds": round(float(candidate.duration), 1),
+                "source_clip_count": _reference_source_count(candidate),
                 "preview_duration": info["duration"],
                 "preview_wav_base64": base64.b64encode(preview.read_bytes()).decode("ascii"),
             }

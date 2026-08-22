@@ -10,6 +10,7 @@ from pathlib import Path
 from voicerig.config import data_dir
 
 _TERMINAL = {"succeeded", "failed", "cancelled"}
+_PAUSED = {"needs_speaker", "needs_reference"}
 
 
 def _parse_time(value) -> datetime | None:
@@ -46,8 +47,9 @@ def prune_job_history(
     """Bound local job metadata and private paused-job inputs.
 
     Active queued/running/cancelling jobs are never touched. Jobs waiting for a
-    speaker choice retain their local inputs only for a bounded period so a
-    forgotten browser session cannot keep private source media indefinitely.
+    speaker or reference choice retain their local inputs only for a bounded
+    period so a forgotten browser session cannot keep private source media
+    indefinitely.
     """
     jobs_root = root or (data_dir() / "jobs")
     jobs_root.mkdir(parents=True, exist_ok=True)
@@ -73,14 +75,17 @@ def prune_job_history(
         if updated is None:
             continue
 
-        if state == "needs_speaker" and updated < paused_cutoff:
+        if state in _PAUSED and updated < paused_cutoff:
+            label = "speaker-/referencevalg" if state == "needs_reference" else "speaker-valg"
             payload.update(
                 state="cancelled",
                 stage="cancelled",
-                progress=int(payload.get("progress") or 40),
-                message="Jobbet udløb efter 7 dage uden speaker-valg. Kildeklippene er slettet.",
+                progress=int(payload.get("progress") or (65 if state == "needs_reference" else 40)),
+                message=f"Jobbet udløb efter 7 dage uden {label}. Kildeklippene er slettet.",
                 speaker_choices=None,
                 speaker_anchor=None,
+                reference_choices=None,
+                reference_choice=None,
                 error=None,
                 updated_at=current.isoformat(),
             )

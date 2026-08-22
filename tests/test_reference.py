@@ -5,7 +5,7 @@ from pathlib import Path
 
 from voicerig.analysis.diarization import Segment
 from voicerig.analysis.reference import rank_references, select_reference, wav_duration
-from voicerig.media.ffmpeg import stitch_wav_segments
+from voicerig.media.ffmpeg import stitch_wav_segments, stitch_wav_sources
 
 
 def make_tone(path: Path, seconds: float = 7.0, rate: int = 24000):
@@ -46,6 +46,34 @@ def test_reference_can_stitch_multiple_short_turns_without_copying_gaps(tmp_path
     stitched = tmp_path / "stitched.wav"
     stitch_wav_segments(candidate.source, stitched, list(candidate.parts))
     assert 6.45 < wav_duration(stitched) < 6.55
+
+
+def test_short_speaker_clips_pool_into_multiple_cross_file_references(tmp_path: Path):
+    wavs = [tmp_path / f"short-{idx}.wav" for idx in range(4)]
+    for wav in wavs:
+        make_tone(wav, seconds=4.0)
+    diarizations = {
+        wav: [Segment(0.25, 3.25, "A")]
+        for wav in wavs
+    }
+
+    ranked = rank_references(wavs, diarizations, limit=4)
+
+    # No individual clip contains the old 5.5-second minimum, but 12 seconds of
+    # speaker-matched speech across four clips is enough for two useful auditions.
+    assert len(ranked) == 2
+    assert all(candidate.source_parts for candidate in ranked)
+    assert all(candidate.duration >= 5.5 for candidate in ranked)
+    represented = {
+        source
+        for candidate in ranked
+        for source, _start, _duration in candidate.source_parts
+    }
+    assert represented == set(wavs)
+
+    stitched = tmp_path / "cross-file-reference.wav"
+    stitch_wav_sources(list(ranked[0].source_parts), stitched)
+    assert 5.9 < wav_duration(stitched) < 6.2
 
 
 def test_backup_references_prefer_diverse_non_duplicate_windows(tmp_path: Path):

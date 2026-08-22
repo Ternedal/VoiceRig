@@ -48,6 +48,9 @@ def test_library_lists_voice_from_both_locations_once(monkeypatch, tmp_path: Pat
     assert voice["is_default"] is True
     assert voice["in_library"] is True
     assert voice["installed_in_modelrig"] is True
+    assert voice["compatibility"]["state"] == "direct"
+    assert voice["compatibility"]["runtime_supported"] is True
+    assert voice["compatibility"]["can_rebuild_from_reference"] is True
 
 
 def test_library_keeps_corrupt_profile_visible(monkeypatch, tmp_path: Path):
@@ -67,6 +70,7 @@ def test_import_preview_activate_and_delete(monkeypatch, tmp_path: Path):
 
     imported = import_package(source, "imported.mrvoice")
     assert imported["package"] == "imported.mrvoice"
+    assert imported["compatibility"]["state"] == "direct"
     assert validate_package(library / "imported.mrvoice")["name"] == "Imported"
     assert preview_wav("imported.mrvoice") == b"RIFF-preview"
 

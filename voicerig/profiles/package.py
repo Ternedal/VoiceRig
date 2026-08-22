@@ -14,9 +14,7 @@ from voicerig.model_contract import (
     CHATTERBOX_ENGINE,
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
-    DANISH_TTS_CFG_WEIGHT,
-    DANISH_TTS_EXAGGERATION,
-    DANISH_TTS_TEMPERATURE,
+    tts_defaults,
 )
 
 FORMAT = "modelrig-voice"
@@ -89,11 +87,7 @@ def build_package(
             "conditioning": "conditioning.pt",
             "preview": "preview.wav",
         },
-        defaults={
-            "exaggeration": DANISH_TTS_EXAGGERATION,
-            "cfg_weight": DANISH_TTS_CFG_WEIGHT,
-            "temperature": DANISH_TTS_TEMPERATURE,
-        },
+        defaults=tts_defaults(language),
     )
     files: list[tuple[Path, str]] = [
         (reference, "reference.wav"),

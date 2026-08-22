@@ -136,7 +136,7 @@ def manifest_engine(spec: EngineSpec = CURRENT_ENGINE, *, include_options: bool 
 
 
 def defaults_for_engine(spec: EngineSpec, language: str) -> dict[str, float]:
-    if spec is ROST_DANISH_ENGINE_SPEC:
+    if spec.identity == ROST_DANISH_ENGINE_SPEC.identity:
         return {
             "exaggeration": DEFAULT_TTS_EXAGGERATION,
             "cfg_weight": ROST_DANISH_CFG_WEIGHT,
@@ -165,7 +165,7 @@ def package_compatibility(manifest: Mapping) -> dict:
             "state": "runtime-rebuild",
             "runtime_supported": True,
             "can_rebuild_from_reference": True,
-            "known_engine": False,
+            "known_engine": True,
             "detail": "Conditioning skal regenereres fra reference.wav for den aktive revision.",
         }
 

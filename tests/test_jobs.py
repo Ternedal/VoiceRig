@@ -111,6 +111,8 @@ def test_job_pauses_for_speaker_and_resumes_from_stable_anchor(monkeypatch, tmp_
         waiting = _wait(manager, created["id"], {"needs_speaker"})
         assert len(waiting["speaker_choices"]) == 2
         assert (root / "jobs" / created["id"]).is_dir()
+        with manager._lock:
+            assert created["id"] not in manager._active
 
         manager.choose_speaker(created["id"], "0:5.000")
         finished = _wait(manager, created["id"], {"succeeded"})
@@ -138,6 +140,8 @@ def test_job_pauses_for_reference_auditions_and_resumes_selected_candidate(monke
         assert len(waiting["reference_choices"]) == 2
         assert waiting["reference_choices"][1]["quality_score"] == 0.86
         assert (root / "jobs" / created["id"]).is_dir()
+        with manager._lock:
+            assert created["id"] not in manager._active
 
         resumed = manager.choose_reference(created["id"], 2)
         assert resumed["state"] in {"queued", "running"}

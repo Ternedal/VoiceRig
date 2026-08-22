@@ -3,12 +3,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from voicerig.model_contract import (
-    CHATTERBOX_MODEL,
-    DANISH_TTS_CFG_WEIGHT,
-    DANISH_TTS_EXAGGERATION,
-    DANISH_TTS_TEMPERATURE,
-)
+from voicerig.model_contract import CHATTERBOX_MODEL, tts_defaults
 from voicerig.runtime import chatterbox_device
 
 
@@ -78,8 +73,9 @@ class ChatterboxEngine:
 
     def build_conditioning(self, reference_wav: Path, output: Path) -> Path:
         model = _shared_model()
+        defaults = tts_defaults(self.language)
         with _MODEL_RUN_LOCK:
-            model.prepare_conditionals(str(reference_wav), exaggeration=DANISH_TTS_EXAGGERATION)
+            model.prepare_conditionals(str(reference_wav), exaggeration=defaults["exaggeration"])
             if model.conds is None:
                 raise RuntimeError("Chatterbox oprettede ingen voice conditioning.")
             # This is a transient build identity, deliberately distinct from any
@@ -103,15 +99,16 @@ class ChatterboxEngine:
             raise ChatterboxUnavailable("torchaudio mangler i Chatterbox-installationen.") from exc
         model = _shared_model()
         text = "Hej. Dette er en prøve på den nye stemme i ModelRig."
+        defaults = tts_defaults(self.language)
         with _MODEL_RUN_LOCK:
             if model.conds is None:
                 raise RuntimeError("Preview kræver forberedt voice conditioning.")
             wav = model.generate(
                 text,
                 language_id=self.language,
-                exaggeration=DANISH_TTS_EXAGGERATION,
-                cfg_weight=DANISH_TTS_CFG_WEIGHT,
-                temperature=DANISH_TTS_TEMPERATURE,
+                exaggeration=defaults["exaggeration"],
+                cfg_weight=defaults["cfg_weight"],
+                temperature=defaults["temperature"],
             )
             output.parent.mkdir(parents=True, exist_ok=True)
             _save_pcm16(ta, output, wav, model.sr)

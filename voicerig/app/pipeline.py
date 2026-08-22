@@ -320,7 +320,7 @@ def create_voice(
     language: str = "da",
     speaker_choice: int | None = None,
     speaker_anchor: str | None = None,
-    reference_choice: int | None = None,
+    reference_choice: int | None = 1,
     progress: ProgressCallback | None = None,
     wait_for_build_slot: bool = True,
 ) -> BuildResult:

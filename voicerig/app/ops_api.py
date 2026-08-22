@@ -100,6 +100,11 @@ def ui_app_js():
     return FileResponse(_UI_DIR / "app.js", media_type="text/javascript")
 
 
+@router.get("/ui/reference-flow.js", include_in_schema=False)
+def ui_reference_flow_js():
+    return FileResponse(_UI_DIR / "reference-flow.js", media_type="text/javascript")
+
+
 @router.get("/ui/styles.css", include_in_schema=False)
 def ui_styles_css():
     return FileResponse(_UI_DIR / "styles.css", media_type="text/css")

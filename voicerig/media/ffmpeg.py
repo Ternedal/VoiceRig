@@ -99,3 +99,63 @@ def stitch_wav_segments(
     if not target.exists() or target.stat().st_size < 128:
         raise FFmpegError("Den samlede reference blev tom.")
     return target
+
+
+def stitch_wav_sources(
+    parts: list[tuple[Path, float, float]],
+    target: Path,
+    *,
+    gap_ms: int = 80,
+) -> Path:
+    """Join clean regions from multiple canonical mono PCM16 WAV files.
+
+    VoiceRig normalizes every upload to the same 24 kHz mono PCM format before
+    diarization. This helper lets several short, speaker-matched clips contribute
+    to one Chatterbox reference without copying silence or other speakers between
+    the selected turns.
+    """
+    if not parts:
+        raise FFmpegError("Ingen talesegmenter at samle på tværs af klip.")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    chunks: list[bytes] = []
+    rate: int | None = None
+    for source, start_s, duration_s in parts:
+        with wave.open(str(source), "rb") as src:
+            if src.getnchannels() != 1 or src.getsampwidth() != 2:
+                raise FFmpegError("Multi-klip reference kræver canonical mono PCM16 WAV.")
+            source_rate = src.getframerate()
+            if source_rate <= 0:
+                raise FFmpegError("Reference-WAV har ugyldig sample rate.")
+            if rate is None:
+                rate = source_rate
+            elif source_rate != rate:
+                raise FFmpegError("Referenceklippene har forskellige sample rates.")
+
+            total_frames = src.getnframes()
+            start = max(0, min(total_frames, int(max(0.0, start_s) * source_rate)))
+            frames = max(1, int(max(0.05, duration_s) * source_rate))
+            frames = min(frames, max(0, total_frames - start))
+            if frames <= 0:
+                continue
+            src.setpos(start)
+            raw = src.readframes(frames)
+            if raw:
+                chunks.append(raw)
+
+    if not chunks or rate is None:
+        raise FFmpegError("De valgte multi-klip-segmenter indeholdt ingen lyd.")
+
+    silence = b"\x00\x00" * max(0, int(rate * gap_ms / 1000))
+    with wave.open(str(target), "wb") as dst:
+        dst.setnchannels(1)
+        dst.setsampwidth(2)
+        dst.setframerate(rate)
+        for idx, raw in enumerate(chunks):
+            if idx:
+                dst.writeframes(silence)
+            dst.writeframes(raw)
+
+    if not target.exists() or target.stat().st_size < 128:
+        raise FFmpegError("Den samlede multi-klip-reference blev tom.")
+    return target

@@ -3,7 +3,12 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from voicerig.model_contract import CHATTERBOX_MODEL
+from voicerig.model_contract import (
+    CHATTERBOX_MODEL,
+    DANISH_TTS_CFG_WEIGHT,
+    DANISH_TTS_EXAGGERATION,
+    DANISH_TTS_TEMPERATURE,
+)
 from voicerig.runtime import chatterbox_device
 
 
@@ -74,7 +79,7 @@ class ChatterboxEngine:
     def build_conditioning(self, reference_wav: Path, output: Path) -> Path:
         model = _shared_model()
         with _MODEL_RUN_LOCK:
-            model.prepare_conditionals(str(reference_wav), exaggeration=0.5)
+            model.prepare_conditionals(str(reference_wav), exaggeration=DANISH_TTS_EXAGGERATION)
             if model.conds is None:
                 raise RuntimeError("Chatterbox oprettede ingen voice conditioning.")
             # This is a transient build identity, deliberately distinct from any
@@ -104,9 +109,9 @@ class ChatterboxEngine:
             wav = model.generate(
                 text,
                 language_id=self.language,
-                exaggeration=0.5,
-                cfg_weight=0.5,
-                temperature=0.8,
+                exaggeration=DANISH_TTS_EXAGGERATION,
+                cfg_weight=DANISH_TTS_CFG_WEIGHT,
+                temperature=DANISH_TTS_TEMPERATURE,
             )
             output.parent.mkdir(parents=True, exist_ok=True)
             _save_pcm16(ta, output, wav, model.sr)

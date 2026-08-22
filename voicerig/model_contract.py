@@ -4,6 +4,20 @@ CHATTERBOX_ENGINE = "chatterbox-multilingual"
 CHATTERBOX_MODEL = "v3"
 CHATTERBOX_SOURCE_REVISION = "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
 
+# Danish quality comparison candidate. Røst v3 500M is a Danish-finetuned
+# Chatterbox Multilingual checkpoint from the Alexandra Institute / CoRal
+# project. Keep the Hugging Face revision immutable so a physical A/B verdict
+# always refers to the exact same weights.
+ROST_DANISH_ENGINE = CHATTERBOX_ENGINE
+ROST_DANISH_MODEL = "roest-v3-chatterbox-500m"
+ROST_DANISH_REPO_ID = "CoRal-project/roest-v3-chatterbox-500m"
+ROST_DANISH_REVISION = "cd451fdc474aabd229fa0c6b6818f4b34382917e"
+ROST_DANISH_TEMPERATURE = 0.8
+ROST_DANISH_CFG_WEIGHT = 0.5
+ROST_DANISH_REPETITION_PENALTY = 2.0
+ROST_DANISH_MIN_P = 0.05
+ROST_DANISH_TOP_P = 0.95
+
 DEFAULT_TTS_EXAGGERATION = 0.5
 DEFAULT_TTS_CFG_WEIGHT = 0.5
 DEFAULT_TTS_TEMPERATURE = 0.8

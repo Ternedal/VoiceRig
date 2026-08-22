@@ -8,11 +8,9 @@ from pathlib import Path
 
 from voicerig.analysis.diarization import _worker_python
 from voicerig.config import data_dir, load_local_env
+from voicerig.engines.catalog import CURRENT_ENGINE
 from voicerig.engines.chatterbox import _shared_model
 from voicerig.model_contract import (
-    CHATTERBOX_ENGINE,
-    CHATTERBOX_MODEL,
-    CHATTERBOX_SOURCE_REVISION,
     DIARIZATION_AUDIO_INPUT,
     DIARIZATION_TORCH_VERSION,
     DIARIZATION_TORCHAUDIO_VERSION,
@@ -31,18 +29,19 @@ def _version_matches(actual, expected: str) -> bool:
 
 
 def warm_chatterbox() -> dict:
-    model = _shared_model()
+    spec = CURRENT_ENGINE
+    model = _shared_model(spec.model, spec.revision)
     try:
         supported = model.get_supported_languages()
     except Exception as exc:
         raise RuntimeError("Chatterbox kunne ikke rapportere understøttede sprog.") from exc
     if "da" not in supported:
-        raise RuntimeError("Den installerede Chatterbox-kode understøtter ikke dansk V3.")
+        raise RuntimeError(f"Den installerede {spec.label}-kode understøtter ikke dansk.")
     return {
         "ok": True,
-        "engine": CHATTERBOX_ENGINE,
-        "model": CHATTERBOX_MODEL,
-        "revision": CHATTERBOX_SOURCE_REVISION,
+        "engine": spec.name,
+        "model": spec.model,
+        "revision": spec.revision,
         "language": "da",
         "device": str(getattr(model, "device", "unknown")),
         "sample_rate": int(getattr(model, "sr", 0) or 0),
@@ -100,13 +99,14 @@ def warm_diarization(timeout_seconds: float = 1800.0) -> dict:
 
 def _write_readiness_marker(report: dict) -> Path:
     marker = data_dir() / "model-readiness.json"
+    spec = CURRENT_ENGINE
     payload = {
         "schema": MODEL_READINESS_SCHEMA,
         "verified_at": datetime.now(timezone.utc).isoformat(),
         "chatterbox": {
-            "engine": CHATTERBOX_ENGINE,
-            "model": CHATTERBOX_MODEL,
-            "revision": CHATTERBOX_SOURCE_REVISION,
+            "engine": spec.name,
+            "model": spec.model,
+            "revision": spec.revision,
         },
         "diarization": {
             "package_version": PYANNOTE_PACKAGE_VERSION,

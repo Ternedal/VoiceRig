@@ -1,0 +1,47 @@
+name: danish-engine-contract
+on:
+  push:
+  pull_request:
+
+jobs:
+  packaged-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: JavaScript syntax
+        run: |
+          node --check voicerig/ui/app.js
+          node --check voicerig/ui/reference-flow.js
+          node --check voicerig/ui/danish-engine-compare.js
+      - name: Build wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel
+      - name: Prove Røst A/B assets are packaged
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          wheel = next(Path("dist").glob("voicerig-*.whl"))
+          with zipfile.ZipFile(wheel) as zf:
+              names = set(zf.namelist())
+              required = {
+                  "voicerig/ui/index.html",
+                  "voicerig/ui/app.js",
+                  "voicerig/ui/reference-flow.js",
+                  "voicerig/ui/danish-engine-compare.js",
+                  "voicerig/engines/rost.py",
+              }
+              missing = sorted(required - names)
+              assert not missing, f"wheel missing Danish comparison assets: {missing}"
+              html = zf.read("voicerig/ui/index.html").decode("utf-8")
+              compare_js = zf.read("voicerig/ui/danish-engine-compare.js").decode("utf-8")
+              assert '/ui/danish-engine-compare.js' in html
+              assert '/api/tts/compare/rost' in compare_js
+              assert 'voice_package: voice.package' in compare_js
+          print("Danish engine packaged contract: PASS")
+          PY

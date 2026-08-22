@@ -60,6 +60,9 @@ def test_preview_reuses_prepared_conditioning_without_audio_prompt(tmp_path: Pat
 
     assert "audio_prompt_path" not in generated["kwargs"]
     assert generated["kwargs"]["language_id"] == "da"
+    assert generated["kwargs"]["exaggeration"] == 0.5
+    assert generated["kwargs"]["cfg_weight"] == 0.0
+    assert generated["kwargs"]["temperature"] == 0.8
     assert saved["wav"] is marker
     assert saved["kwargs"]["encoding"] == "PCM_S"
     assert saved["kwargs"]["bits_per_sample"] == 16

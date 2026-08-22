@@ -12,7 +12,16 @@ def test_nonblocking_build_is_rejected_while_shared_gate_is_busy(tmp_path: Path,
     entered = threading.Event()
     release = threading.Event()
 
-    def fake_impl(name, sources, output_dir, language, speaker_choice, speaker_anchor, progress):
+    def fake_impl(
+        name,
+        sources,
+        output_dir,
+        language,
+        speaker_choice,
+        speaker_anchor,
+        reference_choice,
+        progress,
+    ):
         entered.set()
         assert release.wait(timeout=3)
         return pipeline.BuildResult(

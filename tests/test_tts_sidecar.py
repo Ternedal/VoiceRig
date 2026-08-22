@@ -1,10 +1,12 @@
 from pathlib import Path
 
+import pytest
+
 import voicerig.engines.chatterbox as chatterbox
 import voicerig.engines.package_runtime as package_runtime
+from voicerig.engines.catalog import CURRENT_ENGINE, ROST_DANISH_ENGINE_SPEC, manifest_engine
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.engines.package_runtime import resolve_package
-from voicerig.model_contract import CHATTERBOX_ENGINE, CHATTERBOX_MODEL
 from voicerig.profiles.package import build_package, validate_package
 
 
@@ -95,8 +97,8 @@ def test_conditioning_from_different_source_revision_is_rebuilt_from_reference(t
     manifest = validate_package(package)
     manifest = dict(manifest)
     manifest["engine"] = {
-        "name": CHATTERBOX_ENGINE,
-        "model": CHATTERBOX_MODEL,
+        "name": CURRENT_ENGINE.name,
+        "model": CURRENT_ENGINE.model,
         "revision": "0" * 40,
     }
     cache = tmp_path / "cache-portable"
@@ -112,3 +114,24 @@ def test_conditioning_from_different_source_revision_is_rebuilt_from_reference(t
     assert calls == [str(reference)]
     assert model.conds is not None
     chatterbox._set_conditioning_key(None)
+
+
+def test_known_nonproduction_engine_is_reported_as_reference_portable_not_silently_run(tmp_path: Path):
+    package = _package(tmp_path, "candidate")
+    manifest = validate_package(package)
+    manifest = dict(manifest)
+    manifest["engine"] = manifest_engine(ROST_DANISH_ENGINE_SPEC, include_options=True)
+
+    with pytest.raises(RuntimeError, match="reference.wav kan genbruges"):
+        package_runtime._runtime_engine(manifest)
+
+
+def test_current_engine_family_with_old_revision_remains_runtime_supported(tmp_path: Path):
+    package = _package(tmp_path, "old-revision")
+    manifest = validate_package(package)
+    manifest = dict(manifest)
+    manifest["engine"] = dict(manifest["engine"], revision="0" * 40)
+
+    engine = package_runtime._runtime_engine(manifest)
+    assert engine["name"] == CURRENT_ENGINE.name
+    assert engine["model"] == CURRENT_ENGINE.model

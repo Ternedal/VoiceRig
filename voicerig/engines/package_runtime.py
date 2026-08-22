@@ -151,10 +151,14 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
     manifest = _manifest(package)
     _runtime_engine(manifest)
     device = chatterbox_device()
-    model = _shared_model()
     defaults = manifest.get("defaults") or {}
 
+    # Keep model selection inside the same transaction as conditioning and
+    # generation. The Danish A/B endpoint can temporarily swap the resident
+    # checkpoint to Røst, so a concurrent package call must not retain a model
+    # object that is being evicted from the GPU.
     with _MODEL_RUN_LOCK:
+        model = _shared_model()
         _ensure_conditioning(model, package, manifest, device)
         wav = model.generate(
             text,

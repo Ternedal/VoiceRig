@@ -1,17 +1,25 @@
 from pathlib import Path
 
-from voicerig.model_contract import (
-    DANISH_TTS_CFG_WEIGHT,
-    DANISH_TTS_EXAGGERATION,
-    DANISH_TTS_TEMPERATURE,
-)
+from voicerig.model_contract import tts_defaults
 from voicerig.profiles.package import build_package, validate_package
 
 
 def test_danish_tuning_is_accent_minimizing_and_other_controls_stay_stable():
-    assert DANISH_TTS_CFG_WEIGHT == 0.0
-    assert DANISH_TTS_EXAGGERATION == 0.5
-    assert DANISH_TTS_TEMPERATURE == 0.8
+    assert tts_defaults("da") == {
+        "exaggeration": 0.5,
+        "cfg_weight": 0.0,
+        "temperature": 0.8,
+    }
+    assert tts_defaults("da-DK") == tts_defaults("da")
+
+
+def test_non_danish_languages_keep_chatterbox_defaults():
+    assert tts_defaults("sv") == {
+        "exaggeration": 0.5,
+        "cfg_weight": 0.5,
+        "temperature": 0.8,
+    }
+    assert tts_defaults("de") == tts_defaults("sv")
 
 
 def test_new_voice_package_persists_danish_tuning(tmp_path: Path):
@@ -27,8 +35,4 @@ def test_new_voice_package_persists_danish_tuning(tmp_path: Path):
     manifest = validate_package(package)
 
     assert manifest["language"] == "da"
-    assert manifest["defaults"] == {
-        "exaggeration": 0.5,
-        "cfg_weight": 0.0,
-        "temperature": 0.8,
-    }
+    assert manifest["defaults"] == tts_defaults("da")

@@ -2,22 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from voicerig.engines.catalog import ROST_DANISH_ENGINE_SPEC, defaults_for_engine
 from voicerig.engines.chatterbox import (
     ChatterboxUnavailable,
     _MODEL_RUN_LOCK,
     _save_pcm16,
     _set_conditioning_key,
     _shared_model,
-)
-from voicerig.model_contract import (
-    DEFAULT_TTS_EXAGGERATION,
-    ROST_DANISH_CFG_WEIGHT,
-    ROST_DANISH_MIN_P,
-    ROST_DANISH_MODEL,
-    ROST_DANISH_REPETITION_PENALTY,
-    ROST_DANISH_REVISION,
-    ROST_DANISH_TEMPERATURE,
-    ROST_DANISH_TOP_P,
 )
 
 
@@ -48,14 +39,18 @@ def synthesize_rost_danish(reference_wav: Path, text: str, output: Path) -> dict
     except Exception as exc:  # pragma: no cover - heavyweight optional dependency
         raise ChatterboxUnavailable("torchaudio mangler i Chatterbox-installationen.") from exc
 
+    spec = ROST_DANISH_ENGINE_SPEC
+    shared = defaults_for_engine(spec, "da")
+    options = dict(spec.option_defaults)
+
     # Model selection and generation share one lock. Switching from the current
     # general V3 checkpoint to Røst evicts the old GPU model, so no concurrent
     # package synthesis may keep using that object while it is being replaced.
     with _MODEL_RUN_LOCK:
-        model = _shared_model(ROST_DANISH_MODEL, ROST_DANISH_REVISION)
+        model = _shared_model(spec.model, spec.revision)
         model.prepare_conditionals(
             str(reference_wav),
-            exaggeration=DEFAULT_TTS_EXAGGERATION,
+            exaggeration=shared["exaggeration"],
         )
         if model.conds is None:
             raise RuntimeError("Røst kunne ikke oprette voice conditioning fra reference.wav.")
@@ -63,12 +58,12 @@ def synthesize_rost_danish(reference_wav: Path, text: str, output: Path) -> dict
         wav = model.generate(
             clean_text,
             language_id="da",
-            exaggeration=DEFAULT_TTS_EXAGGERATION,
-            cfg_weight=ROST_DANISH_CFG_WEIGHT,
-            temperature=ROST_DANISH_TEMPERATURE,
-            repetition_penalty=ROST_DANISH_REPETITION_PENALTY,
-            min_p=ROST_DANISH_MIN_P,
-            top_p=ROST_DANISH_TOP_P,
+            exaggeration=shared["exaggeration"],
+            cfg_weight=shared["cfg_weight"],
+            temperature=shared["temperature"],
+            repetition_penalty=options["repetition_penalty"],
+            min_p=options["min_p"],
+            top_p=options["top_p"],
         )
         output.parent.mkdir(parents=True, exist_ok=True)
         _save_pcm16(ta, output, wav, int(model.sr))
@@ -76,9 +71,9 @@ def synthesize_rost_danish(reference_wav: Path, text: str, output: Path) -> dict
     frames = int(wav.shape[-1])
     sample_rate = int(model.sr)
     return {
-        "engine": "Røst v3 Chatterbox 500M",
-        "model": ROST_DANISH_MODEL,
-        "revision": ROST_DANISH_REVISION,
+        "engine": spec.label,
+        "model": spec.model,
+        "revision": spec.revision,
         "sample_rate": sample_rate,
         "duration": round(frames / sample_rate, 3) if sample_rate else 0.0,
         "language": "da",

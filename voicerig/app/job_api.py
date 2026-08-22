@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from voicerig.app.job_retention import prune_job_history
 from voicerig.app.jobs import job_manager
-from voicerig.app.pipeline import SUPPORTED_EXTENSIONS
+from voicerig.app.pipeline import MAX_SOURCE_FILES, SUPPORTED_EXTENSIONS
 from voicerig.config import max_upload_mb
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -32,8 +32,11 @@ def start_voice_job(
     install_in_modelrig: bool = Form(True),
     files: list[UploadFile] = File(...),
 ) -> dict:
-    if len(files) > 10:
-        raise HTTPException(status_code=400, detail="Maksimalt 10 filer pr. stemme.")
+    if len(files) > MAX_SOURCE_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Maksimalt {MAX_SOURCE_FILES} filer pr. stemme.",
+        )
     if not name.strip():
         raise HTTPException(status_code=422, detail="Stemmen skal have et navn.")
 
@@ -81,6 +84,18 @@ def choose_job_speaker(job_id: str, anchor: str = Form(...)) -> dict:
         raise HTTPException(status_code=400, detail="Ugyldigt speaker-anker.")
     try:
         return {"ok": True, "job": job_manager.choose_speaker(job_id, anchor)}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{job_id}/reference")
+def choose_job_reference(job_id: str, choice: int = Form(...)) -> dict:
+    if choice < 1 or choice > 4:
+        raise HTTPException(status_code=400, detail="Ugyldigt referencevalg.")
+    try:
+        return {"ok": True, "job": job_manager.choose_reference(job_id, choice)}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (RuntimeError, ValueError) as exc:

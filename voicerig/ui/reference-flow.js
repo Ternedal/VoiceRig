@@ -81,18 +81,59 @@
     }
   };
 
-  function setFiles(files) {
-    const all = [...files];
-    state.files = all.slice(0, MAX_UI_FILES);
-    if (all.length > MAX_UI_FILES) {
-      toastMsg(`VoiceRig bruger de første ${MAX_UI_FILES} filer. Fjern nogle filer, hvis du vil vælge andre.`, true);
-    }
-    renderFiles();
-    renderButton();
+  function fileIdentity(file) {
+    return `${file.name}\u0000${file.size}\u0000${file.lastModified}\u0000${file.type}`;
   }
 
-  picker.onchange = () => setFiles(picker.files);
-  drop.addEventListener('drop', (event) => setFiles(event.dataTransfer.files));
+  function addFiles(files) {
+    const incoming = [...files];
+    const merged = [...state.files];
+    const known = new Set(merged.map(fileIdentity));
+    let duplicateCount = 0;
+    let overflowCount = 0;
+
+    for (const file of incoming) {
+      const key = fileIdentity(file);
+      if (known.has(key)) {
+        duplicateCount += 1;
+        continue;
+      }
+      if (merged.length >= MAX_UI_FILES) {
+        overflowCount += 1;
+        continue;
+      }
+      merged.push(file);
+      known.add(key);
+    }
+
+    state.files = merged;
+    renderFiles();
+    renderButton();
+
+    if (overflowCount) {
+      toastMsg(`VoiceRig kan bruge højst ${MAX_UI_FILES} filer. ${overflowCount} fil(er) blev ikke tilføjet.`, true);
+    } else if (duplicateCount) {
+      toastMsg(`${duplicateCount} dubletfil(er) var allerede valgt og blev sprunget over.`);
+    }
+  }
+
+  // The base V1 UI replaced the whole selection on every picker/drop action.
+  // RC17-style additive selection keeps earlier files and lets the user build a
+  // source set in several small batches. Resetting the picker value also lets a
+  // removed file be selected again later.
+  picker.onchange = () => {
+    addFiles(picker.files);
+    picker.value = '';
+  };
+
+  // Intercept drop in the capture phase so the older app.js bubble listener
+  // cannot replace the accumulated selection with only the latest dropped set.
+  drop.addEventListener('drop', (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    drop.classList.remove('drag');
+    addFiles(event.dataTransfer.files);
+  }, true);
 
   async function resumeReferenceJob() {
     try {

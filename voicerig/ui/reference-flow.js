@@ -37,7 +37,7 @@
         audio.preload = 'metadata';
         audio.src = `data:audio/wav;base64,${reference.preview_wav_base64}`;
         const choose = el('button', 'secondary', 'Brug denne reference');
-        choose.onclick = () => chooseReference(reference.choice);
+        choose.onclick = () => window.chooseReference(reference.choice);
         card.append(audio, choose);
         grid.appendChild(card);
       }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -14,6 +15,11 @@ from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats
 
 router = APIRouter()
+
+
+def _ascii_header(value: object) -> str:
+    """Return deterministic percent-UTF8 transport text safe for HTTP headers."""
+    return quote(str(value), safe="._-")
 
 
 class SynthesizeRequest(BaseModel):
@@ -43,12 +49,12 @@ def tts_synthesize(req: SynthesizeRequest):
 
     gpu = cuda_memory_stats()
     headers = {
-        "X-VoiceRig-Voice": str(meta["voice"]),
-        "X-VoiceRig-Voice-ID": str(meta["voice_id"]),
-        "X-VoiceRig-Package": str(meta["package"]),
+        "X-VoiceRig-Voice": _ascii_header(meta["voice"]),
+        "X-VoiceRig-Voice-ID": _ascii_header(meta["voice_id"]),
+        "X-VoiceRig-Package": _ascii_header(meta["package"]),
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
         "X-VoiceRig-Duration": str(meta["duration"]),
-        "X-VoiceRig-Device": str(meta["device"]),
+        "X-VoiceRig-Device": _ascii_header(meta["device"]),
     }
     # The build endpoint resets PyTorch peak counters. These headers therefore
     # provide the same long-lived process' peak after the subsequent TTS call,
@@ -95,14 +101,14 @@ def tts_compare_rost(req: SynthesizeRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     # HTTP header values must stay byte/ASCII-safe across ASGI servers and test
-    # clients. Keep the human-facing Røst spelling in the UI/body; use an ASCII
-    # transliteration only in transport metadata.
+    # clients. Keep the human-facing Røst spelling in the UI; transport metadata
+    # is deliberately ASCII-only.
     headers = {
         "X-VoiceRig-Engine": "Roest v3 Chatterbox 500M",
-        "X-VoiceRig-Model": str(meta["model"]),
-        "X-VoiceRig-Revision": str(meta["revision"]),
+        "X-VoiceRig-Model": _ascii_header(meta["model"]),
+        "X-VoiceRig-Revision": _ascii_header(meta["revision"]),
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
         "X-VoiceRig-Duration": str(meta["duration"]),
-        "X-VoiceRig-Language": str(meta["language"]),
+        "X-VoiceRig-Language": _ascii_header(meta["language"]),
     }
     return Response(content=raw, media_type="audio/wav", headers=headers)

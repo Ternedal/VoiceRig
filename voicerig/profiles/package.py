@@ -70,14 +70,19 @@ def build_package(
     output: Path,
     alternatives: list[Path] | None = None,
     engine_spec: EngineSpec | None = None,
+    voice_id: str | None = None,
 ) -> Path:
     alternatives = alternatives or []
     spec = engine_spec or CURRENT_ENGINE
-    voice_id = f"{slugify(name)}-{uuid.uuid4().hex[:8]}"
+    resolved_voice_id = (
+        f"{slugify(name)}-{uuid.uuid4().hex[:8]}" if voice_id is None else str(voice_id)
+    )
+    if not _VOICE_ID.fullmatch(resolved_voice_id):
+        raise ValueError("Ugyldigt voice-id til .mrvoice-pakken.")
     manifest = Manifest(
         format=FORMAT,
         format_version=FORMAT_VERSION,
-        id=voice_id,
+        id=resolved_voice_id,
         name=name.strip(),
         language=language,
         # Current V3 packages keep the exact legacy v1 engine shape. Engines

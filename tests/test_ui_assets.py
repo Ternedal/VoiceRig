@@ -17,12 +17,15 @@ def test_index_references_packaged_assets_and_modelrig_secret_controls():
     assert 'href="/ui/styles.css"' in html
     assert 'src="/ui/app.js"' in html
     assert 'src="/ui/reference-flow.js"' in html
+    assert 'src="/ui/danish-engine-compare.js"' in html
     assert "1–20 lyd- eller videoklip" in html
     assert 'id="modelrigToken"' in html
     assert 'type="password"' in html
     assert 'id="saveModelrigToken"' in html
     assert 'id="clearModelrigToken"' in html
     assert 'id="voiceTester"' in html
+    assert 'id="compareRostVoice"' in html
+    assert 'id="rostCompareAudio"' in html
 
 
 def test_javascript_uses_secret_safe_modelrig_configuration_contract():
@@ -55,29 +58,44 @@ def test_reference_flow_exposes_real_auditions_and_additive_twenty_file_selectio
     assert "filer valgt" in javascript
 
 
-def test_reference_flow_javascript_parses_when_node_is_available():
+def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
+    javascript = (UI_DIR / "danish-engine-compare.js").read_text(encoding="utf-8")
+
+    assert "fetch('/api/tts/compare/rost'" in javascript
+    assert "voice_package: voice.package" in javascript
+    assert "5,4 GB" in javascript
+    assert "ModelRig" not in javascript
+    assert "state.rostCompareAudioUrl" in javascript
+
+
+def test_ui_javascript_parses_when_node_is_available():
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not installed in this test environment")
-    subprocess.run(
-        [node, "--check", str(UI_DIR / "reference-flow.js")],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    for filename in ("reference-flow.js", "danish-engine-compare.js"):
+        subprocess.run(
+            [node, "--check", str(UI_DIR / filename)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
 
 def test_ui_asset_routes_are_fixed_files():
     js = ops_api.ui_app_js()
     reference_js = ops_api.ui_reference_flow_js()
+    compare_js = ops_api.ui_danish_engine_compare_js()
     css = ops_api.ui_styles_css()
 
     assert isinstance(js, FileResponse)
     assert isinstance(reference_js, FileResponse)
+    assert isinstance(compare_js, FileResponse)
     assert isinstance(css, FileResponse)
     assert Path(js.path).resolve() == (UI_DIR / "app.js").resolve()
     assert Path(reference_js.path).resolve() == (UI_DIR / "reference-flow.js").resolve()
+    assert Path(compare_js.path).resolve() == (UI_DIR / "danish-engine-compare.js").resolve()
     assert Path(css.path).resolve() == (UI_DIR / "styles.css").resolve()
     assert js.media_type == "text/javascript"
     assert reference_js.media_type == "text/javascript"
+    assert compare_js.media_type == "text/javascript"
     assert css.media_type == "text/css"

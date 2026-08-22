@@ -10,7 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from voicerig.app.pipeline import SpeakerSelectionRequired, create_voice
+from voicerig.app.pipeline import (
+    BuildResult,
+    ReferenceSelectionRequired,
+    SpeakerSelectionRequired,
+    create_voice,
+)
 from voicerig.config import data_dir, modelrig_base_url, modelrig_token
 from voicerig.modelrig.client import ModelRigUnavailable, install_voice
 from voicerig.profiles.package import validate_package
@@ -86,6 +91,7 @@ class VoiceJobManager:
         value = dict(payload)
         value.pop("inputs", None)
         value.pop("speaker_anchor", None)
+        value.pop("reference_choice", None)
         return value
 
     def _cleanup_inputs(self, job_id: str) -> None:
@@ -134,6 +140,8 @@ class VoiceJobManager:
                 "inputs": inputs,
                 "speaker_anchor": None,
                 "speaker_choices": None,
+                "reference_choice": None,
+                "reference_choices": None,
                 "result": None,
                 "error": None,
                 "created_at": _now(),
@@ -186,6 +194,7 @@ class VoiceJobManager:
                 data_dir() / "voices",
                 language=payload.get("language") or "da",
                 speaker_anchor=payload.get("speaker_anchor"),
+                reference_choice=payload.get("reference_choice"),
                 progress=lambda stage, percent, message: self._checkpoint(job_id, stage, percent, message),
             )
             self._checkpoint(job_id, "installing", 96, "Installerer profilen i ModelRig…")
@@ -223,6 +232,7 @@ class VoiceJobManager:
                 stage="complete",
                 message="Stemmen er klar.",
                 speaker_choices=None,
+                reference_choices=None,
                 result=final_result,
                 error=None,
             )
@@ -235,6 +245,19 @@ class VoiceJobManager:
                 stage="speaker_selection",
                 message=str(exc),
                 speaker_choices=exc.choices,
+                reference_choices=None,
+                reference_choice=None,
+                error=None,
+            )
+        except ReferenceSelectionRequired as exc:
+            self._update(
+                job_id,
+                state="needs_reference",
+                progress=65,
+                stage="reference_selection",
+                message=str(exc),
+                speaker_choices=None,
+                reference_choices=exc.choices,
                 error=None,
             )
         except BuildCancelled as exc:
@@ -244,6 +267,7 @@ class VoiceJobManager:
                 stage="cancelled",
                 message=str(exc),
                 speaker_choices=None,
+                reference_choices=None,
                 result=None,
                 error=None,
             )
@@ -255,6 +279,7 @@ class VoiceJobManager:
                 stage="failed",
                 message="Voice-build fejlede.",
                 speaker_choices=None,
+                reference_choices=None,
                 result=None,
                 error=str(exc),
             )
@@ -297,6 +322,34 @@ class VoiceJobManager:
                 message="Speaker valgt. Venter på GPU-køen…",
                 speaker_anchor=anchor,
                 speaker_choices=None,
+                reference_choice=None,
+                reference_choices=None,
+                error=None,
+            )
+            self._write(payload)
+        self._submit(job_id)
+        return self.get(job_id)
+
+    def choose_reference(self, job_id: str, choice: int) -> dict:
+        with self._lock:
+            payload = self._read(job_id)
+            if payload.get("state") != "needs_reference":
+                raise ValueError("Jobbet venter ikke på et referencevalg.")
+            choices = payload.get("reference_choices") or []
+            valid_choices = {
+                int(item.get("choice"))
+                for item in choices
+                if isinstance(item, dict) and isinstance(item.get("choice"), int)
+            }
+            if choice not in valid_choices:
+                raise ValueError("Det valgte referenceklip hører ikke til dette job.")
+            payload.update(
+                state="queued",
+                progress=65,
+                stage="queued",
+                message="Reference valgt. Bygger den endelige stemme…",
+                reference_choice=int(choice),
+                reference_choices=None,
                 error=None,
             )
             self._write(payload)
@@ -309,12 +362,13 @@ class VoiceJobManager:
             state = payload.get("state")
             if state in _TERMINAL:
                 return self._public(payload)
-            if state == "needs_speaker":
+            if state in {"needs_speaker", "needs_reference"}:
                 payload.update(
                     state="cancelled",
                     stage="cancelled",
                     message="Voice-build blev annulleret.",
                     speaker_choices=None,
+                    reference_choices=None,
                     error=None,
                 )
                 self._write(payload)
@@ -329,9 +383,8 @@ class VoiceJobManager:
         """Recover interrupted local jobs after a service restart.
 
         Jobs that were running are safe to restart from the original local
-        uploads because package writes are atomic and the GPU pipeline is
-        deterministic enough for retry semantics. Speaker-selection jobs stay
-        paused with their local previews and source clips until the user chooses.
+        uploads because package writes are atomic. Speaker/reference selection
+        jobs stay paused with their local choices until the user decides.
         """
         for path in self._root().glob("*.json"):
             try:
@@ -349,10 +402,11 @@ class VoiceJobManager:
                     stage="cancelled",
                     message="Jobbet var ved at blive annulleret, da VoiceRig genstartede.",
                     speaker_choices=None,
+                    reference_choices=None,
                 )
                 self._cleanup_inputs(job_id)
                 continue
-            if state == "needs_speaker":
+            if state in {"needs_speaker", "needs_reference"}:
                 if not self._work_dir(job_id).is_dir():
                     self._update(
                         job_id,
@@ -360,6 +414,7 @@ class VoiceJobManager:
                         stage="failed",
                         message="VoiceRig genstartede, og de midlertidige kildefiler mangler.",
                         speaker_choices=None,
+                        reference_choices=None,
                         error="Job recovery failed: source files missing",
                     )
                 continue

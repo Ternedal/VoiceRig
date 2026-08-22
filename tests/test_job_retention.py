@@ -12,12 +12,14 @@ def _write_job(root: Path, job_id: str, state: str, updated: datetime) -> Path:
         "id": job_id,
         "state": state,
         "stage": state,
-        "progress": 40,
+        "progress": 65 if state == "needs_reference" else 40,
         "message": state,
         "created_at": updated.isoformat(),
         "updated_at": updated.isoformat(),
         "speaker_choices": [{"anchor": "0:1.0", "preview_wav_base64": "PRIVATE"}] if state == "needs_speaker" else None,
         "speaker_anchor": None,
+        "reference_choices": [{"choice": 1, "preview_wav_base64": "PRIVATE"}] if state == "needs_reference" else None,
+        "reference_choice": None,
     }
     path = root / f"{job_id}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -38,6 +40,27 @@ def test_expired_speaker_job_drops_private_inputs(tmp_path: Path):
     assert result["expired_paused"] == 1
     assert payload["state"] == "cancelled"
     assert payload["speaker_choices"] is None
+    assert payload["reference_choices"] is None
+    assert not work.exists()
+
+
+def test_expired_reference_job_drops_private_inputs_and_auditions(tmp_path: Path):
+    now = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    job_id = "c" * 32
+    _write_job(tmp_path, job_id, "needs_reference", now - timedelta(days=8))
+    work = tmp_path / job_id
+    work.mkdir()
+    (work / "input_00.wav").write_bytes(b"private audio")
+
+    result = prune_job_history(root=tmp_path, now=now, paused_max_age_days=7)
+
+    payload = json.loads((tmp_path / f"{job_id}.json").read_text(encoding="utf-8"))
+    assert result["expired_paused"] == 1
+    assert payload["state"] == "cancelled"
+    assert payload["progress"] == 65
+    assert payload["reference_choices"] is None
+    assert payload["reference_choice"] is None
+    assert "Kildeklippene er slettet" in payload["message"]
     assert not work.exists()
 
 

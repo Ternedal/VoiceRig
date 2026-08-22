@@ -33,6 +33,15 @@ _MODEL_RUN_LOCK = threading.RLock()
 # the cache key must live beside that state rather than in either caller.
 _CONDITIONING_KEY: tuple[str, ...] | None = None
 
+_ROST_REQUIRED_FILES = [
+    "ve.pt",
+    "t3_mtl23ls_v2.safetensors",
+    "s3gen.pt",
+    "grapheme_mtl_merged_expanded_v1.json",
+    "conds.pt",
+    "Cangjie5_TC.json",
+]
+
 
 def _conditioning_key() -> tuple[str, ...] | None:
     return _CONDITIONING_KEY
@@ -78,10 +87,13 @@ def _load_model(model_name: str, revision: str, device: str):
         if model_name == ROST_DANISH_MODEL and revision == ROST_DANISH_REVISION:
             from huggingface_hub import snapshot_download
 
+            # The Røst repository also contains a second 2.14 GB T3 checkpoint
+            # and an unused safetensors copy of the voice encoder. The pinned
+            # Chatterbox from_local() path needs only the exact files below.
             model_dir = snapshot_download(
                 repo_id=ROST_DANISH_REPO_ID,
                 revision=ROST_DANISH_REVISION,
-                allow_patterns=["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+                allow_patterns=_ROST_REQUIRED_FILES,
             )
             return ChatterboxMultilingualTTS.from_local(model_dir, device=device)
     except Exception as exc:  # pragma: no cover - model/runtime/network specific
@@ -129,9 +141,9 @@ class ChatterboxEngine:
         self.language = language
 
     def build_conditioning(self, reference_wav: Path, output: Path) -> Path:
-        model = _shared_model()
         defaults = tts_defaults(self.language)
         with _MODEL_RUN_LOCK:
+            model = _shared_model()
             model.prepare_conditionals(str(reference_wav), exaggeration=defaults["exaggeration"])
             if model.conds is None:
                 raise RuntimeError("Chatterbox oprettede ingen voice conditioning.")
@@ -154,10 +166,10 @@ class ChatterboxEngine:
             import torchaudio as ta
         except Exception as exc:  # pragma: no cover
             raise ChatterboxUnavailable("torchaudio mangler i Chatterbox-installationen.") from exc
-        model = _shared_model()
         text = "Hej. Dette er en prøve på den nye stemme i ModelRig."
         defaults = tts_defaults(self.language)
         with _MODEL_RUN_LOCK:
+            model = _shared_model()
             if model.conds is None:
                 raise RuntimeError("Preview kræver forberedt voice conditioning.")
             wav = model.generate(

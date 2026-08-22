@@ -103,6 +103,20 @@ class VoiceJobManager:
             payload.update(changes)
             return self._write(payload)
 
+    def _pause(self, job_id: str, **changes) -> dict:
+        """Publish a selectable paused state only after this worker is inactive.
+
+        A browser may submit a speaker/reference choice immediately after seeing
+        the paused state. Removing the active marker under the same lock before
+        writing that state guarantees the resume submission cannot be lost in
+        the old worker's finally block.
+        """
+        with self._lock:
+            self._active.discard(job_id)
+            payload = self._read(job_id)
+            payload.update(changes)
+            return self._write(payload)
+
     def create(
         self,
         name: str,
@@ -238,7 +252,7 @@ class VoiceJobManager:
             )
             self._cleanup_inputs(job_id)
         except SpeakerSelectionRequired as exc:
-            self._update(
+            self._pause(
                 job_id,
                 state="needs_speaker",
                 progress=40,
@@ -250,7 +264,7 @@ class VoiceJobManager:
                 error=None,
             )
         except ReferenceSelectionRequired as exc:
-            self._update(
+            self._pause(
                 job_id,
                 state="needs_reference",
                 progress=65,

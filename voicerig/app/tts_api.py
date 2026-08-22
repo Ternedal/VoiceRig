@@ -94,8 +94,11 @@ def tts_compare_rost(req: SynthesizeRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    # HTTP header values must stay byte/ASCII-safe across ASGI servers and test
+    # clients. Keep the human-facing Røst spelling in the UI/body; use an ASCII
+    # transliteration only in transport metadata.
     headers = {
-        "X-VoiceRig-Engine": str(meta["engine"]),
+        "X-VoiceRig-Engine": "Roest v3 Chatterbox 500M",
         "X-VoiceRig-Model": str(meta["model"]),
         "X-VoiceRig-Revision": str(meta["revision"]),
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),

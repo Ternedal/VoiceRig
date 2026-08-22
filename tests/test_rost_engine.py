@@ -18,7 +18,7 @@ from voicerig.model_contract import (
 )
 
 
-def test_rost_loader_uses_exact_huggingface_revision(monkeypatch, tmp_path: Path):
+def test_rost_loader_uses_exact_huggingface_revision_and_minimal_runtime_files(monkeypatch, tmp_path: Path):
     captured = {}
     fake_chatterbox_package = ModuleType("chatterbox")
     fake_mtl = ModuleType("chatterbox.mtl_tts")
@@ -46,7 +46,10 @@ def test_rost_loader_uses_exact_huggingface_revision(monkeypatch, tmp_path: Path
     assert model is not None
     assert captured["snapshot"]["repo_id"] == ROST_DANISH_REPO_ID
     assert captured["snapshot"]["revision"] == ROST_DANISH_REVISION
-    assert "*.safetensors" in captured["snapshot"]["allow_patterns"]
+    assert captured["snapshot"]["allow_patterns"] == chatterbox._ROST_REQUIRED_FILES
+    assert "t3_mtl23ls_v2.safetensors" in captured["snapshot"]["allow_patterns"]
+    assert "t3_23lang.safetensors" not in captured["snapshot"]["allow_patterns"]
+    assert "ve.safetensors" not in captured["snapshot"]["allow_patterns"]
     assert captured["from_local"] == (str(tmp_path / "rost"), "cuda")
 
 

@@ -10,11 +10,12 @@ import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from voicerig.model_contract import (
-    CHATTERBOX_ENGINE,
-    CHATTERBOX_MODEL,
-    CHATTERBOX_SOURCE_REVISION,
-    tts_defaults,
+from voicerig.engines.catalog import (
+    CURRENT_ENGINE,
+    EngineSpec,
+    defaults_for_engine,
+    manifest_engine,
+    validate_engine_options,
 )
 
 FORMAT = "modelrig-voice"
@@ -68,8 +69,10 @@ def build_package(
     preview: Path,
     output: Path,
     alternatives: list[Path] | None = None,
+    engine_spec: EngineSpec | None = None,
 ) -> Path:
     alternatives = alternatives or []
+    spec = engine_spec or CURRENT_ENGINE
     voice_id = f"{slugify(name)}-{uuid.uuid4().hex[:8]}"
     manifest = Manifest(
         format=FORMAT,
@@ -77,17 +80,16 @@ def build_package(
         id=voice_id,
         name=name.strip(),
         language=language,
-        engine={
-            "name": CHATTERBOX_ENGINE,
-            "model": CHATTERBOX_MODEL,
-            "revision": CHATTERBOX_SOURCE_REVISION,
-        },
+        # Current V3 packages keep the exact legacy v1 engine shape. Engines
+        # with extra generation controls serialize them explicitly so package
+        # behavior never depends on hidden runtime defaults.
+        engine=manifest_engine(spec, include_options=bool(spec.option_defaults)),
         files={
             "reference": "reference.wav",
             "conditioning": "conditioning.pt",
             "preview": "preview.wav",
         },
-        defaults=tts_defaults(language),
+        defaults=defaults_for_engine(spec, language),
     )
     files: list[tuple[Path, str]] = [
         (reference, "reference.wav"),
@@ -202,6 +204,7 @@ def _validate_manifest(manifest) -> dict:
         revision = _nonempty_string(revision, "engine.revision", 64)
         if not _HEX40.fullmatch(revision):
             raise ValueError("Manifestets engine.revision er ugyldig.")
+    validate_engine_options(engine)
 
     expected_map = {
         "reference": "reference.wav",

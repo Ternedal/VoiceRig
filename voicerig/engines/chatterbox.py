@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import gc
 import threading
 from pathlib import Path
 
-from voicerig.model_contract import CHATTERBOX_MODEL, tts_defaults
+from voicerig.model_contract import (
+    CHATTERBOX_MODEL,
+    CHATTERBOX_SOURCE_REVISION,
+    ROST_DANISH_MODEL,
+    ROST_DANISH_REPO_ID,
+    ROST_DANISH_REVISION,
+    tts_defaults,
+)
 from voicerig.runtime import chatterbox_device
 
 
@@ -11,7 +19,11 @@ class ChatterboxUnavailable(RuntimeError):
     pass
 
 
-_MODELS: dict[str, object] = {}
+# Keep at most one large Chatterbox-family checkpoint resident per device. The
+# physical RTX 3060 target has 12 GB VRAM; caching both general V3 and Danish
+# Røst simultaneously would make an A/B quality test needlessly OOM-prone.
+# Value: ((model_name, revision), model_object)
+_MODELS: dict[str, tuple[tuple[str, str], object]] = {}
 _MODEL_LOAD_LOCK = threading.Lock()
 # RLock lets a higher-level voice-build transaction hold the GPU state stable
 # while the existing helpers keep their own defensive lock acquisition.
@@ -31,7 +43,25 @@ def _set_conditioning_key(value: tuple[str, ...] | None) -> None:
     _CONDITIONING_KEY = value
 
 
-def _shared_model():
+def _release_device_model(device: str) -> None:
+    previous = _MODELS.pop(device, None)
+    if previous is None:
+        return
+    _set_conditioning_key(None)
+    del previous
+    gc.collect()
+    try:
+        import torch
+
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        # Releasing a previous optional model is best-effort. The subsequent
+        # load remains authoritative and will fail closed if memory is not free.
+        pass
+
+
+def _load_model(model_name: str, revision: str, device: str):
     try:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
     except Exception as exc:  # pragma: no cover - optional heavyweight dependency
@@ -39,20 +69,47 @@ def _shared_model():
             "Chatterbox er ikke installeret. Kør: pip install -e '.[voice]'"
         ) from exc
 
+    try:
+        if model_name == CHATTERBOX_MODEL and revision == CHATTERBOX_SOURCE_REVISION:
+            return ChatterboxMultilingualTTS.from_pretrained(
+                device=device,
+                t3_model=CHATTERBOX_MODEL,
+            )
+        if model_name == ROST_DANISH_MODEL and revision == ROST_DANISH_REVISION:
+            from huggingface_hub import snapshot_download
+
+            model_dir = snapshot_download(
+                repo_id=ROST_DANISH_REPO_ID,
+                revision=ROST_DANISH_REVISION,
+                allow_patterns=["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+            )
+            return ChatterboxMultilingualTTS.from_local(model_dir, device=device)
+    except Exception as exc:  # pragma: no cover - model/runtime/network specific
+        raise ChatterboxUnavailable(
+            f"Chatterbox-modellen {model_name} kunne ikke indlæses på {device}."
+        ) from exc
+
+    raise ChatterboxUnavailable(
+        f"Ukendt eller ikke-pinnet Chatterbox-model: {model_name}@{revision}."
+    )
+
+
+def _shared_model(
+    model_name: str = CHATTERBOX_MODEL,
+    revision: str = CHATTERBOX_SOURCE_REVISION,
+):
     device = chatterbox_device()
+    key = (model_name, revision)
     with _MODEL_LOAD_LOCK:
-        if device not in _MODELS:
-            try:
-                _MODELS[device] = ChatterboxMultilingualTTS.from_pretrained(
-                    device=device,
-                    t3_model=CHATTERBOX_MODEL,
-                )
-                _set_conditioning_key(None)
-            except Exception as exc:  # pragma: no cover - model/runtime specific
-                raise ChatterboxUnavailable(
-                    f"Chatterbox {CHATTERBOX_MODEL.upper()} kunne ikke indlæses på {device}."
-                ) from exc
-        return _MODELS[device]
+        resident = _MODELS.get(device)
+        if resident is not None and resident[0] == key:
+            return resident[1]
+        if resident is not None:
+            _release_device_model(device)
+        model = _load_model(model_name, revision, device)
+        _MODELS[device] = (key, model)
+        _set_conditioning_key(None)
+        return model
 
 
 def _save_pcm16(ta, path: Path, wav, sample_rate: int) -> None:

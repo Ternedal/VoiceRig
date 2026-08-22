@@ -31,6 +31,8 @@ SUPPORTED_EXTENSIONS = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v",
     ".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma",
 }
+MAX_SOURCE_FILES = 20
+MAX_REFERENCE_CHOICES = 4
 
 ProgressCallback = Callable[[str, int, str], None]
 _BUILD_GATE = threading.Lock()
@@ -50,6 +52,14 @@ class VoiceBuildBusy(RuntimeError):
 class SpeakerSelectionRequired(ValueError):
     def __init__(self, choices: list[dict]):
         super().__init__("Vi fandt flere tydelige stemmer. Vælg den, du vil bruge.")
+        self.choices = choices
+
+
+class ReferenceSelectionRequired(ValueError):
+    def __init__(self, choices: list[dict]):
+        super().__init__(
+            "Vi fandt flere gode referenceklip. Lyt til de danske prøver og vælg den, der lyder mest som dig."
+        )
         self.choices = choices
 
 
@@ -168,6 +178,47 @@ def _materialize_reference(candidate: ReferenceCandidate, target: Path) -> Path:
     return target
 
 
+def _reference_choices(
+    work: Path,
+    ranked: list[ReferenceCandidate],
+    language: str,
+    progress: ProgressCallback | None,
+) -> list[dict]:
+    """Render actual TTS auditions for each reference candidate.
+
+    Raw source/reference audio is never exposed through the job API. The user
+    hears the same synthesized Danish preview path that the final profile uses,
+    which makes the selection about resulting voice quality rather than signal
+    level alone.
+    """
+    engine = ChatterboxEngine(language=language)
+    choices: list[dict] = []
+    total = min(MAX_REFERENCE_CHOICES, len(ranked))
+    for idx, candidate in enumerate(ranked[:MAX_REFERENCE_CHOICES], start=1):
+        _progress(
+            progress,
+            "reference_audition",
+            55 + int(((idx - 1) / max(1, total)) * 10),
+            f"Laver dansk prøve {idx} af {total}…",
+        )
+        reference = _materialize_reference(candidate, work / f"reference-choice-{idx:02d}.wav")
+        conditioning = work / f"conditioning-choice-{idx:02d}.pt"
+        preview = work / f"preview-choice-{idx:02d}.wav"
+        engine.build_artifacts(reference, conditioning, preview)
+        info = validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
+        choices.append(
+            {
+                "choice": idx,
+                "label": f"Reference {idx}",
+                "quality_score": round(float(candidate.score), 4),
+                "reference_seconds": round(float(candidate.duration), 1),
+                "preview_duration": info["duration"],
+                "preview_wav_base64": base64.b64encode(preview.read_bytes()).decode("ascii"),
+            }
+        )
+    return choices
+
+
 def _create_voice_impl(
     name: str,
     sources: list[Path],
@@ -175,6 +226,7 @@ def _create_voice_impl(
     language: str,
     speaker_choice: int | None,
     speaker_anchor: str | None,
+    reference_choice: int | None,
     progress: ProgressCallback | None,
 ) -> BuildResult:
     _progress(progress, "starting", 1, "Forbereder voice-build…")
@@ -221,16 +273,30 @@ def _create_voice_impl(
                     f"diarization-runtime. Detalje: {exc}"
                 ) from exc
             diarizations = {}
-        _progress(progress, "reference", 50, "Vælger de bedste rene talestykker…")
+        _progress(progress, "reference", 50, "Vælger de bedste rene talestykker på tværs af klippene…")
 
-        ranked = rank_references(wavs, diarizations, limit=4)
-        reference = _materialize_reference(ranked[0], work / "reference.wav")
+        ranked = rank_references(wavs, diarizations, limit=MAX_REFERENCE_CHOICES)
+        if reference_choice is None and len(ranked) >= 2:
+            choices = _reference_choices(work, ranked, language, progress)
+            if len(choices) >= 2:
+                _progress(progress, "reference_selection", 65, "Venter på dit valg af den bedste danske prøve.")
+                raise ReferenceSelectionRequired(choices)
+
+        if reference_choice is None:
+            selected_index = 0
+        else:
+            selected_index = int(reference_choice) - 1
+            if selected_index < 0 or selected_index >= len(ranked):
+                raise ValueError("Den valgte reference findes ikke længere. Start voice-build igen.")
+
+        reference = _materialize_reference(ranked[selected_index], work / "reference.wav")
         alternatives: list[Path] = []
-        for idx, candidate in enumerate(ranked[1:4], start=1):
+        backup_candidates = [candidate for idx, candidate in enumerate(ranked) if idx != selected_index]
+        for idx, candidate in enumerate(backup_candidates[:3], start=1):
             target = work / f"reference-alt-{idx:02d}.wav"
             alternatives.append(_materialize_reference(candidate, target))
 
-        _progress(progress, "conditioning", 65, "Bygger stemmens Chatterbox-conditioning og preview…")
+        _progress(progress, "conditioning", 70, "Bygger stemmens Chatterbox-conditioning og preview…")
         engine = ChatterboxEngine(language=language)
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
@@ -254,6 +320,7 @@ def create_voice(
     language: str = "da",
     speaker_choice: int | None = None,
     speaker_anchor: str | None = None,
+    reference_choice: int | None = None,
     progress: ProgressCallback | None = None,
     wait_for_build_slot: bool = True,
 ) -> BuildResult:
@@ -261,12 +328,23 @@ def create_voice(
         raise ValueError("Stemmen skal have et navn.")
     if not sources:
         raise ValueError("Tilføj mindst én lyd- eller videofil.")
+    if len(sources) > MAX_SOURCE_FILES:
+        raise ValueError(f"Maksimalt {MAX_SOURCE_FILES} filer pr. stemme.")
     bad = [p.name for p in sources if p.suffix.lower() not in SUPPORTED_EXTENSIONS]
     if bad:
         raise ValueError(f"Ikke-understøttet filtype: {', '.join(bad)}")
 
     _acquire_build_gate(progress, wait_for_build_slot)
     try:
-        return _create_voice_impl(name, sources, output_dir, language, speaker_choice, speaker_anchor, progress)
+        return _create_voice_impl(
+            name,
+            sources,
+            output_dir,
+            language,
+            speaker_choice,
+            speaker_anchor,
+            reference_choice,
+            progress,
+        )
     finally:
         _BUILD_GATE.release()

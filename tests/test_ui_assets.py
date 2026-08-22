@@ -19,6 +19,7 @@ def test_index_references_packaged_assets_and_modelrig_secret_controls():
     assert 'src="/ui/reference-flow.js"' in html
     assert 'src="/ui/danish-engine-compare.js"' in html
     assert "1–20 lyd- eller videoklip" in html
+    assert "ca. 3,2 GB" in html
     assert 'id="modelrigToken"' in html
     assert 'type="password"' in html
     assert 'id="saveModelrigToken"' in html
@@ -63,7 +64,7 @@ def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
 
     assert "fetch('/api/tts/compare/rost'" in javascript
     assert "voice_package: voice.package" in javascript
-    assert "5,4 GB" in javascript
+    assert "3,2 GB" in javascript
     assert "ModelRig" not in javascript
     assert "state.rostCompareAudioUrl" in javascript
 

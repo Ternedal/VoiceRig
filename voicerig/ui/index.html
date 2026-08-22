@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/ui/styles.css">
   <script src="/ui/app.js" defer></script>
   <script src="/ui/reference-flow.js" defer></script>
+  <script src="/ui/danish-engine-compare.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -78,10 +79,17 @@
           </div>
           <textarea id="testVoiceText" maxlength="4000" aria-label="Tekst til stemmetest">Hej. Dette er en test af stemmen i VoiceRig.</textarea>
           <div class="voice-tester-actions">
-            <button id="synthesizeVoice" class="secondary" type="button">Afspil test</button>
+            <button id="synthesizeVoice" class="secondary" type="button">Afspil nuværende motor</button>
+            <button id="compareRostVoice" class="secondary" type="button">A/B: Afspil Røst v3 dansk</button>
             <span id="testVoiceStatus" class="muted tiny"></span>
           </div>
           <audio id="testVoiceAudio" controls hidden></audio>
+          <div id="rostComparePanel" class="status" hidden>
+            <strong>Røst v3 Chatterbox 500M</strong>
+            <div class="muted tiny">Samme reference og samme tekst som ovenfor. Første kørsel henter den pinnede danske model lokalt (ca. 5,4 GB). Det ændrer ikke din .mrvoice eller ModelRig-default.</div>
+            <audio id="rostCompareAudio" controls hidden></audio>
+            <div id="rostCompareStatus" class="muted tiny"></div>
+          </div>
         </div>
 
         <div id="library" class="library-grid"></div>

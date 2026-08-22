@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import weakref
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -73,6 +74,38 @@ def test_shared_model_keeps_only_one_large_checkpoint_per_device(monkeypatch):
     assert rost_again is rost_model
     assert len(loaded) == 2
     assert chatterbox._MODELS["cuda"] == ((ROST_DANISH_MODEL, ROST_DANISH_REVISION), rost_model)
+
+
+def test_shared_model_drops_internal_reference_before_loading_replacement(monkeypatch):
+    """The cache itself must not keep the previous GPU model alive during load."""
+    chatterbox._MODELS.clear()
+    monkeypatch.setattr(chatterbox, "chatterbox_device", lambda: "cuda")
+
+    class OldModel:
+        pass
+
+    old = OldModel()
+    old_ref = weakref.ref(old)
+    chatterbox._MODELS["cuda"] = ((CHATTERBOX_MODEL, CHATTERBOX_SOURCE_REVISION), old)
+    del old
+
+    replacement = object()
+
+    def fake_load(model_name, revision, device):
+        # _release_device_model() performs gc.collect() before this call. If
+        # _shared_model still holds its local `resident` tuple, old_ref() is not
+        # None here and the physical GPU checkpoint may still occupy VRAM.
+        assert old_ref() is None
+        assert (model_name, revision, device) == (
+            ROST_DANISH_MODEL,
+            ROST_DANISH_REVISION,
+            "cuda",
+        )
+        return replacement
+
+    monkeypatch.setattr(chatterbox, "_load_model", fake_load)
+
+    assert chatterbox._shared_model(ROST_DANISH_MODEL, ROST_DANISH_REVISION) is replacement
 
 
 def test_rost_synthesis_uses_danish_quality_parameters(monkeypatch, tmp_path: Path):

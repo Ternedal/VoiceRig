@@ -161,7 +161,13 @@ def rank_references(
     limit: int = 4,
     max_overlap_ratio: float = 0.5,
 ) -> list[ReferenceCandidate]:
-    """Return the best sufficiently diverse references, best candidate first."""
+    """Return strong, non-duplicate references while preferring source diversity.
+
+    When users provide multiple clips, the first pass takes at most one candidate
+    from each source file. A second pass then fills any remaining slots with the
+    best non-overlapping windows. This makes additional uploads materially useful
+    instead of allowing one long/high-level clip to monopolize every audition.
+    """
     candidates = sorted(
         _all_candidates(wavs, diarizations or {}, target_s),
         key=lambda item: item.score,
@@ -170,11 +176,25 @@ def rank_references(
     if not candidates:
         raise ValueError("Der er for lidt brugbar tale. Tilføj mindst ca. 6-10 sekunders tydelig tale.")
 
+    wanted = max(1, limit)
     selected: list[ReferenceCandidate] = []
+    used_sources: set[Path] = set()
+
     for candidate in candidates:
+        if candidate.source in used_sources:
+            continue
         if all(_overlap_ratio(candidate, existing) <= max_overlap_ratio for existing in selected):
             selected.append(candidate)
-        if len(selected) >= max(1, limit):
+            used_sources.add(candidate.source)
+        if len(selected) >= wanted:
+            return selected
+
+    for candidate in candidates:
+        if candidate in selected:
+            continue
+        if all(_overlap_ratio(candidate, existing) <= max_overlap_ratio for existing in selected):
+            selected.append(candidate)
+        if len(selected) >= wanted:
             break
     return selected or [candidates[0]]
 

@@ -5,10 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import voicerig.model_warmup as warmup
+from voicerig.engines.catalog import CURRENT_ENGINE
 from voicerig.model_contract import (
-    CHATTERBOX_ENGINE,
-    CHATTERBOX_MODEL,
-    CHATTERBOX_SOURCE_REVISION,
     DIARIZATION_AUDIO_INPUT,
     DIARIZATION_TORCH_VERSION,
     DIARIZATION_TORCHAUDIO_VERSION,
@@ -44,11 +42,19 @@ def test_warm_chatterbox_requires_danish_support(monkeypatch):
         def get_supported_languages():
             return {"da": "Danish", "en": "English"}
 
-    monkeypatch.setattr(warmup, "_shared_model", lambda: FakeModel())
+    captured = {}
+
+    def fake_shared(model, revision):
+        captured["identity"] = (model, revision)
+        return FakeModel()
+
+    monkeypatch.setattr(warmup, "_shared_model", fake_shared)
     report = warmup.warm_chatterbox()
+    assert captured["identity"] == (CURRENT_ENGINE.model, CURRENT_ENGINE.revision)
     assert report["ok"] is True
-    assert report["model"] == CHATTERBOX_MODEL
-    assert report["revision"] == CHATTERBOX_SOURCE_REVISION
+    assert report["engine"] == CURRENT_ENGINE.name
+    assert report["model"] == CURRENT_ENGINE.model
+    assert report["revision"] == CURRENT_ENGINE.revision
     assert report["language"] == "da"
     assert report["device"] == "cuda"
 
@@ -59,8 +65,8 @@ def test_warm_chatterbox_fails_without_danish(monkeypatch):
         def get_supported_languages():
             return {"en": "English"}
 
-    monkeypatch.setattr(warmup, "_shared_model", lambda: FakeModel())
-    with pytest.raises(RuntimeError, match="dansk V3"):
+    monkeypatch.setattr(warmup, "_shared_model", lambda *_args: FakeModel())
+    with pytest.raises(RuntimeError, match="understøtter ikke dansk"):
         warmup.warm_chatterbox()
 
 
@@ -129,7 +135,11 @@ def test_readiness_marker_records_exact_model_contract(tmp_path: Path, monkeypat
     marker = warmup._write_readiness_marker(report)
     payload = json.loads(marker.read_text(encoding="utf-8"))
     assert payload["schema"] == MODEL_READINESS_SCHEMA
-    assert payload["chatterbox"] == {"engine": CHATTERBOX_ENGINE, "model": CHATTERBOX_MODEL, "revision": CHATTERBOX_SOURCE_REVISION}
+    assert payload["chatterbox"] == {
+        "engine": CURRENT_ENGINE.name,
+        "model": CURRENT_ENGINE.model,
+        "revision": CURRENT_ENGINE.revision,
+    }
     assert payload["diarization"] == {
         "package_version": PYANNOTE_PACKAGE_VERSION,
         "model": PYANNOTE_MODEL_ID,

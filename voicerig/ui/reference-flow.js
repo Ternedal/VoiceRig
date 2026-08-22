@@ -4,6 +4,16 @@
   stageNames.reference_audition = 'Laver danske prøveudtaler';
   stageNames.reference_selection = 'Vælg reference';
 
+  const baseRenderFiles = renderFiles;
+  renderFiles = function renderFilesWithCount() {
+    baseRenderFiles();
+    if (state.files.length) {
+      filesEl.appendChild(
+        el('div', 'muted tiny', `${state.files.length}/${MAX_UI_FILES} filer valgt`),
+      );
+    }
+  };
+
   const baseRenderJob = renderJob;
   renderJob = function renderJobWithReferenceChoice(job) {
     if (job && job.state === 'needs_reference') {
@@ -25,11 +35,15 @@
         const score = Number.isFinite(reference.quality_score)
           ? ` · signal ${reference.quality_score.toFixed(2)}`
           : '';
+        const sourceCount = Number(reference.source_clip_count || 1);
+        const sources = sourceCount > 1
+          ? ` · samlet fra ${sourceCount} klip`
+          : ' · fra ét klip';
         card.appendChild(
           el(
             'div',
             'voice-name',
-            `${reference.label || `Reference ${reference.choice}`} · ca. ${reference.reference_seconds || '?'} sek. reference${score}`,
+            `${reference.label || `Reference ${reference.choice}`} · ca. ${reference.reference_seconds || '?'} sek. reference${sources}${score}`,
           ),
         );
         const audio = document.createElement('audio');

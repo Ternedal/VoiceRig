@@ -114,6 +114,11 @@ def ui_danish_engine_compare_js():
     return FileResponse(_UI_DIR / "danish-engine-compare.js", media_type="text/javascript")
 
 
+@router.get("/ui/voice-options.js", include_in_schema=False)
+def ui_voice_options_js():
+    return FileResponse(_UI_DIR / "voice-options.js", media_type="text/javascript")
+
+
 @router.get("/ui/styles.css", include_in_schema=False)
 def ui_styles_css():
     return FileResponse(_UI_DIR / "styles.css", media_type="text/css")

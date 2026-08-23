@@ -6,6 +6,7 @@
   <title>VoiceRig</title>
   <link rel="stylesheet" href="/ui/styles.css">
   <script src="/ui/app.js" defer></script>
+  <script src="/ui/voice-options.js" defer></script>
   <script src="/ui/reference-flow.js" defer></script>
   <script src="/ui/danish-engine-compare.js" defer></script>
 </head>
@@ -33,7 +34,7 @@
         <div class="section-head">
           <div>
             <h2>Opret en ny stemme</h2>
-            <div class="muted tiny">1–20 lyd- eller videoklip. Du kan tilføje klip i flere omgange; de lægges til den eksisterende liste. VoiceRig laver flere danske prøveudtaler, når materialet giver flere gode referenceklip, så du kan vælge den bedste før profilen bygges.</div>
+            <div class="muted tiny">1–20 lyd- eller videoklip. Du kan tilføje klip i flere omgange; de lægges til den eksisterende liste. VoiceRig laver prøveudtaler med profilens produktionsmotor, når materialet giver flere gode referenceklip, så du kan vælge den bedste før profilen bygges.</div>
           </div>
         </div>
 
@@ -51,6 +52,21 @@
 
         <label class="field-label" for="name">Navn på stemmen</label>
         <input id="name" type="text" placeholder="Fx Anders" autocomplete="off" maxlength="160">
+
+        <label class="field-label" for="voiceLocale">Sprog og region</label>
+        <select id="voiceLocale" aria-describedby="voiceLocaleHelp">
+          <option value="da-DK">Dansk — Danmark</option>
+        </select>
+        <div id="voiceLocaleHelp" class="muted tiny">Dansk bruger Røst som standardmotor. Andre understøttede sprog bruger den pinnede multilingual-motor. Locale gemmes i .mrvoice; motoren får kun sit dokumenterede base-language-id.</div>
+
+        <div id="voiceAccentField" hidden>
+          <label class="field-label" for="voiceAccent">Regional accent</label>
+          <select id="voiceAccent" disabled>
+            <option value="">Fra reference / ikke angivet</option>
+          </select>
+          <div id="voiceAccentHelp" class="muted tiny"></div>
+        </div>
+
         <button id="create" class="primary" type="button" disabled>Opret stemme</button>
         <div id="buildStatus" class="status" aria-live="polite"></div>
       </div>

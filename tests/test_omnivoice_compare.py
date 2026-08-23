@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+import voicerig.app.main as app_main
 import voicerig.app.tts_api as tts_api
 import voicerig.engines.omnivoice as omnivoice
-from voicerig.app.main import app
 from voicerig.model_contract import (
     OMNIVOICE_ASR_REVISION,
     OMNIVOICE_MODEL_REVISION,
@@ -36,6 +36,14 @@ def _package(tmp_path: Path, language: str = "da") -> Path:
     _wav(preview)
     package = tmp_path / "voice.mrvoice"
     return build_package("Test", language, reference, conditioning, preview, package)
+
+
+def _client(monkeypatch) -> TestClient:
+    # Starlette TestClient reports a synthetic peer named "testclient" rather
+    # than 127.0.0.1. Bypass only the network boundary in these endpoint unit
+    # tests; dedicated netguard tests keep the production loopback gate locked.
+    monkeypatch.setattr(app_main, "allow_lan", lambda: True)
+    return TestClient(app_main.app)
 
 
 def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
@@ -113,7 +121,7 @@ def test_omnivoice_compare_api_uses_same_profile_reference(tmp_path: Path, monke
         }
 
     monkeypatch.setattr(tts_api, "synthesize_omnivoice_danish", fake_synthesize)
-    client = TestClient(app)
+    client = _client(monkeypatch)
     response = client.post(
         "/api/tts/compare/omnivoice",
         json={"text": "Rødgrød med fløde", "voice_package": package.name},
@@ -125,8 +133,6 @@ def test_omnivoice_compare_api_uses_same_profile_reference(tmp_path: Path, monke
     assert response.headers["X-VoiceRig-Revision"] == OMNIVOICE_MODEL_REVISION
     assert response.headers["X-VoiceRig-Source-Revision"] == OMNIVOICE_SOURCE_REVISION
     assert observed["text"] == "Rødgrød med fløde"
-    with wave.open(str(tmp_path / "reference.wav"), "rb") as _:
-        pass
     assert observed["reference"] == (tmp_path / "reference.wav").read_bytes()
 
 
@@ -141,7 +147,7 @@ def test_omnivoice_compare_api_rejects_non_danish_profile(tmp_path: Path, monkey
         raise AssertionError("OmniVoice must not run for non-Danish comparison")
 
     monkeypatch.setattr(tts_api, "synthesize_omnivoice_danish", should_not_run)
-    client = TestClient(app)
+    client = _client(monkeypatch)
     response = client.post(
         "/api/tts/compare/omnivoice",
         json={"text": "Hello", "voice_package": package.name},

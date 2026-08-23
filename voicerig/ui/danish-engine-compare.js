@@ -1,54 +1,87 @@
 (() => {
-  const button = document.querySelector('#compareRostVoice');
-  const panel = document.querySelector('#rostComparePanel');
-  const audio = document.querySelector('#rostCompareAudio');
-  const status = document.querySelector('#rostCompareStatus');
-  if (!button || !panel || !audio || !status) return;
+  const engines = [
+    {
+      key: 'rost',
+      button: document.querySelector('#compareRostVoice'),
+      panel: document.querySelector('#rostComparePanel'),
+      audio: document.querySelector('#rostCompareAudio'),
+      status: document.querySelector('#rostCompareStatus'),
+      endpoint: '/api/tts/compare/rost',
+      label: 'Røst',
+      waiting: 'Starter Røst v3. Første gang hentes ca. 3,2 GB nødvendige modeldata lokalt; derefter bruges cache…',
+    },
+    {
+      key: 'omnivoice',
+      button: document.querySelector('#compareOmniVoice'),
+      panel: document.querySelector('#omnivoiceComparePanel'),
+      audio: document.querySelector('#omnivoiceCompareAudio'),
+      status: document.querySelector('#omnivoiceCompareStatus'),
+      endpoint: '/api/tts/compare/omnivoice',
+      label: 'OmniVoice',
+      waiting: 'Starter OmniVoice. Første gang oprettes et isoleret runtime-miljø og pinnede OmniVoice/Whisper-modeller hentes lokalt; det kan tage flere minutter…',
+    },
+  ];
 
-  state.rostCompareAudioUrl = null;
+  if (engines.some((engine) => !engine.button || !engine.panel || !engine.audio || !engine.status)) return;
 
-  function resetRostComparison() {
-    audio.pause();
-    audio.removeAttribute('src');
-    audio.load();
-    audio.hidden = true;
-    panel.hidden = true;
-    status.textContent = '';
-    button.disabled = false;
-    if (state.rostCompareAudioUrl) {
-      URL.revokeObjectURL(state.rostCompareAudioUrl);
-      state.rostCompareAudioUrl = null;
+  for (const engine of engines) state[`${engine.key}CompareAudioUrl`] = null;
+
+  function resetEngine(engine) {
+    engine.audio.pause();
+    engine.audio.removeAttribute('src');
+    engine.audio.load();
+    engine.audio.hidden = true;
+    engine.panel.hidden = true;
+    engine.status.textContent = '';
+    engine.button.disabled = false;
+    const stateKey = `${engine.key}CompareAudioUrl`;
+    if (state[stateKey]) {
+      URL.revokeObjectURL(state[stateKey]);
+      state[stateKey] = null;
     }
   }
 
+  function resetComparisons() {
+    for (const engine of engines) resetEngine(engine);
+  }
+
+  function setComparisonBusy(busy) {
+    synthesizeVoiceButton.disabled = busy;
+    for (const engine of engines) engine.button.disabled = busy;
+  }
+
   const baseOpenVoiceTest = openVoiceTest;
-  openVoiceTest = function openVoiceTestWithRostReset(voice) {
-    resetRostComparison();
+  openVoiceTest = function openVoiceTestWithComparisonReset(voice) {
+    resetComparisons();
     baseOpenVoiceTest(voice);
   };
 
   const baseCloseVoiceTest = closeVoiceTest;
-  closeVoiceTest = function closeVoiceTestWithRostReset() {
-    resetRostComparison();
+  closeVoiceTest = function closeVoiceTestWithComparisonReset() {
+    resetComparisons();
     baseCloseVoiceTest();
   };
 
-  async function compareWithRost() {
+  function decodedHeader(value, fallback) {
+    if (!value) return fallback;
+    try { return decodeURIComponent(value); } catch (_) { return value; }
+  }
+
+  async function compare(engine) {
     const voice = state.testVoice;
     const text = testVoiceText.value.trim();
     if (!voice) return;
     if (!text) {
-      status.textContent = 'Skriv en dansk testtekst først.';
-      panel.hidden = false;
+      engine.status.textContent = 'Skriv en dansk testtekst først.';
+      engine.panel.hidden = false;
       return;
     }
 
-    panel.hidden = false;
-    button.disabled = true;
-    synthesizeVoiceButton.disabled = true;
-    status.textContent = 'Starter Røst v3. Første gang hentes ca. 3,2 GB nødvendige modeldata lokalt; derefter bruges cache…';
+    engine.panel.hidden = false;
+    setComparisonBusy(true);
+    engine.status.textContent = engine.waiting;
     try {
-      const response = await fetch('/api/tts/compare/rost', {
+      const response = await fetch(engine.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice_package: voice.package }),
@@ -62,22 +95,24 @@
         throw new Error(message);
       }
       const blob = await response.blob();
-      if (!blob.size) throw new Error('VoiceRig returnerede ingen Røst-lyd.');
-      if (state.rostCompareAudioUrl) URL.revokeObjectURL(state.rostCompareAudioUrl);
-      state.rostCompareAudioUrl = URL.createObjectURL(blob);
-      audio.src = state.rostCompareAudioUrl;
-      audio.hidden = false;
+      if (!blob.size) throw new Error(`VoiceRig returnerede ingen ${engine.label}-lyd.`);
+      const stateKey = `${engine.key}CompareAudioUrl`;
+      if (state[stateKey]) URL.revokeObjectURL(state[stateKey]);
+      state[stateKey] = URL.createObjectURL(blob);
+      engine.audio.src = state[stateKey];
+      engine.audio.hidden = false;
       const duration = response.headers.get('X-VoiceRig-Duration') || '?';
-      const model = response.headers.get('X-VoiceRig-Model') || 'Røst v3';
-      status.textContent = `Klar · ${duration} sek. · ${model}. Sammenlign direkte med “Afspil nuværende motor” ovenfor.`;
-      try { await audio.play(); } catch (_) {}
+      const model = decodedHeader(response.headers.get('X-VoiceRig-Model'), engine.label);
+      engine.status.textContent = `Klar · ${duration} sek. · ${model}. Brug præcis samme tekst til alle tre motorer.`;
+      try { await engine.audio.play(); } catch (_) {}
     } catch (error) {
-      status.textContent = `Røst-test fejlede: ${error.message}`;
+      engine.status.textContent = `${engine.label}-test fejlede: ${error.message}`;
     } finally {
-      button.disabled = false;
-      synthesizeVoiceButton.disabled = false;
+      setComparisonBusy(false);
     }
   }
 
-  button.onclick = compareWithRost;
+  for (const engine of engines) {
+    engine.button.onclick = () => compare(engine);
+  }
 })();

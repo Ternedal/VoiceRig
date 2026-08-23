@@ -135,14 +135,56 @@
     }
   }
 
+  async function promoteRostReference(reference, status) {
+    const voice = state.testVoice;
+    if (!voice) return;
+    const confirmed = window.confirm(
+      `Brug ${reference.label} som den autoritative reference og migrér ${voice.name} til Røst? `
+      + 'Voice-id og ModelRig-default bevares. Pakken erstattes først efter fuld validering.',
+    );
+    if (!confirmed) return;
+
+    setComparisonBusy(true);
+    status.textContent = `Bygger Røst-conditioning og preview fra ${reference.label}…`;
+    try {
+      const response = await fetch('/api/tts/rost/promote-reference', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          voice_package: voice.package,
+          reference_index: reference.index,
+        }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      const data = await response.json();
+      if (!data.ok) throw new Error('VoiceRig bekræftede ikke Røst-migrationen.');
+      status.textContent = `${reference.label} er nu profilens primære reference. Røst er aktiv for denne .mrvoice.`;
+      testVoiceStatus.textContent = 'Profilen er migreret atomisk til Røst. Brug “Afspil nuværende motor” for at teste den rigtige package-runtime.';
+      await refreshLibrary();
+      await refreshSystem();
+    } catch (error) {
+      status.textContent = `Røst-migration fejlede: ${error.message}`;
+    } finally {
+      setComparisonBusy(false);
+    }
+  }
+
   function makeRostReferenceRow(reference) {
     const row = document.createElement('div');
     row.className = 'status';
+
+    const actions = document.createElement('div');
+    actions.className = 'voice-tester-actions';
 
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'secondary';
     button.textContent = `Afspil ${reference.label}`;
+
+    const promote = document.createElement('button');
+    promote.type = 'button';
+    promote.className = 'secondary';
+    promote.textContent = `Brug ${reference.label} med Røst`;
 
     const audio = document.createElement('audio');
     audio.controls = true;
@@ -188,7 +230,9 @@
       }
     };
 
-    row.append(button, audio, status);
+    promote.onclick = () => promoteRostReference(reference, status);
+    actions.append(button, promote);
+    row.append(actions, audio, status);
     return row;
   }
 
@@ -211,7 +255,7 @@
       rostReferenceChoices.innerHTML = '';
       for (const reference of references) rostReferenceChoices.appendChild(makeRostReferenceRow(reference));
       rostReferenceStatus.textContent = references.length > 1
-        ? `Klar: ${references.length} referencer. Brug samme tekst og find den der ligner stemmen mest.`
+        ? `Klar: ${references.length} referencer. Afspil dem med samme tekst; når du har en klar vinder, kan den migreres atomisk til Røst.`
         : 'Profilen indeholder kun den primære reference; der er ingen backup-reference at sammenligne med.';
     } catch (error) {
       rostReferenceStatus.textContent = `Røst-referencer kunne ikke indlæses: ${error.message}`;

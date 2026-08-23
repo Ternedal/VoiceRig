@@ -50,8 +50,8 @@ def test_reference_auditions_use_same_rost_engine_as_final_danish_profile(monkey
         target.write_bytes(b"reference")
         return target
 
-    def fake_artifacts(reference, conditioning, preview, language):
-        calls.append((reference.name, language))
+    def fake_artifacts(reference, conditioning, preview, language, accent=None):
+        calls.append((reference.name, language, accent))
         conditioning.write_bytes(b"conditioning")
         preview.write_bytes(b"preview")
         return conditioning, preview
@@ -62,7 +62,7 @@ def test_reference_auditions_use_same_rost_engine_as_final_danish_profile(monkey
 
     choices = pipeline._reference_choices(tmp_path, ranked, "da", None)
 
-    assert calls == [("reference-choice-01.wav", "da")]
+    assert calls == [("reference-choice-01.wav", "da", None)]
     assert choices[0]["engine"] == ROST_DANISH_ENGINE_SPEC.name
     assert choices[0]["engine_label"] == ROST_DANISH_ENGINE_SPEC.label
 
@@ -81,7 +81,8 @@ def test_new_danish_package_is_built_with_rost_manifest(monkeypatch, tmp_path: P
         target.write_bytes(b"reference")
         return target
 
-    def fake_artifacts(_reference, conditioning, preview, _language):
+    def fake_artifacts(_reference, conditioning, preview, _language, accent=None):
+        assert accent is None
         conditioning.write_bytes(b"conditioning")
         preview.write_bytes(b"preview")
         return conditioning, preview
@@ -90,6 +91,7 @@ def test_new_danish_package_is_built_with_rost_manifest(monkeypatch, tmp_path: P
         captured["name"] = name
         captured["language"] = language
         captured["engine_spec"] = kwargs.get("engine_spec")
+        captured["accent"] = kwargs.get("accent")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"package")
         return output
@@ -116,3 +118,4 @@ def test_new_danish_package_is_built_with_rost_manifest(monkeypatch, tmp_path: P
     assert result.package.read_bytes() == b"package"
     assert captured["language"] == "da"
     assert captured["engine_spec"] == ROST_DANISH_ENGINE_SPEC
+    assert captured["accent"] is None

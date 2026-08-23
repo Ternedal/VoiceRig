@@ -81,6 +81,7 @@
           <div class="voice-tester-actions">
             <button id="synthesizeVoice" class="secondary" type="button">Afspil nuværende motor</button>
             <button id="compareRostVoice" class="secondary" type="button">A/B: Afspil Røst v3 dansk</button>
+            <button id="compareOmniVoice" class="secondary" type="button">A/B/C: Afspil OmniVoice dansk</button>
             <span id="testVoiceStatus" class="muted tiny"></span>
           </div>
           <audio id="testVoiceAudio" controls hidden></audio>
@@ -89,6 +90,12 @@
             <div class="muted tiny">Samme reference og samme tekst som ovenfor. Første kørsel henter kun de nødvendige pinnede Røst-runtimefiler lokalt (ca. 3,2 GB). Det ændrer ikke din .mrvoice eller ModelRig-default.</div>
             <audio id="rostCompareAudio" controls hidden></audio>
             <div id="rostCompareStatus" class="muted tiny"></div>
+          </div>
+          <div id="omnivoiceComparePanel" class="status" hidden>
+            <strong>OmniVoice</strong>
+            <div class="muted tiny">Samme reference og samme tekst. Første kørsel opretter et isoleret OmniVoice-miljø og henter de pinnede OmniVoice- og Whisper-modeller lokalt; det kan tage flere minutter og flere GB. Chatterbox-miljø, .mrvoice og ModelRig-default ændres ikke.</div>
+            <audio id="omnivoiceCompareAudio" controls hidden></audio>
+            <div id="omnivoiceCompareStatus" class="muted tiny"></div>
           </div>
         </div>
 

@@ -7,7 +7,12 @@ import zipfile
 from pathlib import Path
 
 from voicerig.config import data_dir
-from voicerig.engines.catalog import CURRENT_ENGINE, package_compatibility
+from voicerig.engines.catalog import (
+    CURRENT_ENGINE,
+    defaults_for_engine,
+    package_compatibility,
+    runtime_engine_spec,
+)
 from voicerig.engines.chatterbox import (
     _MODEL_RUN_LOCK,
     _conditioning_key,
@@ -95,7 +100,17 @@ def _runtime_engine(manifest: dict) -> dict:
     compatibility = package_compatibility(manifest)
     if not compatibility["runtime_supported"]:
         raise RuntimeError(compatibility["detail"])
+    if runtime_engine_spec(manifest) is None:
+        raise RuntimeError("Stemmeprofilens engine kan ikke matches sikkert til en pinnet runtime.")
     return engine
+
+
+def _runtime_spec(manifest: dict):
+    _runtime_engine(manifest)
+    spec = runtime_engine_spec(manifest)
+    if spec is None:  # defensive: _runtime_engine already rejects this state
+        raise RuntimeError("Stemmeprofilens engine kan ikke matches sikkert til en pinnet runtime.")
+    return spec
 
 
 def _package_conditioning_key(package: Path, manifest: dict, device: str) -> tuple[str, ...]:
@@ -104,6 +119,7 @@ def _package_conditioning_key(package: Path, manifest: dict, device: str) -> tup
     return (
         "package",
         str(manifest["id"]),
+        str(engine.get("model") or "legacy"),
         str(engine.get("revision") or "legacy"),
         str(package.resolve()),
         str(stat.st_mtime_ns),
@@ -114,15 +130,19 @@ def _package_conditioning_key(package: Path, manifest: dict, device: str) -> tup
 
 def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> None:
     engine = _runtime_engine(manifest)
+    spec = _runtime_spec(manifest)
     key = _package_conditioning_key(package, manifest, device)
     with _ACTIVE_LOCK:
         if _conditioning_key() == key and model.conds is not None:
             return
         cache = _materialize(package, manifest)
-        # `conditioning.pt` is a serialized model-specific optimization. Only
-        # load it directly when the package records the exact source revision
-        # running now. Older/future packages remain portable via reference.wav.
-        can_load_serialized = engine.get("revision") == CURRENT_ENGINE.revision
+        # conditioning.pt is model/revision-specific. Exact pinned packages may
+        # load it directly; historical current-Chatterbox packages rebuild from
+        # their authoritative reference.wav instead of guessing compatibility.
+        can_load_serialized = (
+            engine.get("model") == spec.model
+            and engine.get("revision") == spec.revision
+        )
         if can_load_serialized:
             try:
                 from chatterbox.mtl_tts import Conditionals
@@ -136,32 +156,39 @@ def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> N
             model.conds = None
 
         if model.conds is None:
-            model.prepare_conditionals(str(cache / "reference.wav"), exaggeration=0.5)
+            shared = defaults_for_engine(spec, str(manifest.get("language") or "da"))
+            model.prepare_conditionals(
+                str(cache / "reference.wav"),
+                exaggeration=float(shared["exaggeration"]),
+            )
             if model.conds is None:
-                raise RuntimeError("Chatterbox kunne ikke oprette conditioning fra reference.wav")
+                raise RuntimeError(f"{spec.label} kunne ikke oprette conditioning fra reference.wav")
         _set_conditioning_key(key)
 
 
 def synthesize(package: Path, text: str, output: Path) -> dict:
     manifest = _manifest(package)
-    _runtime_engine(manifest)
+    spec = _runtime_spec(manifest)
     device = chatterbox_device()
     defaults = manifest.get("defaults") or {}
+    engine = manifest.get("engine") or {}
+    options = engine.get("options") or {}
 
-    # Keep model selection inside the same transaction as conditioning and
-    # generation. The Danish A/B endpoint can temporarily swap the resident
-    # checkpoint to Røst, so a concurrent package call must not retain a model
-    # object that is being evicted from the GPU.
+    # Model selection, conditioning and generation form one transaction. Røst
+    # and general Chatterbox share mutable conditionals and one physical GPU.
     with _MODEL_RUN_LOCK:
-        model = _shared_model(CURRENT_ENGINE.model, CURRENT_ENGINE.revision)
+        model = _shared_model(spec.model, spec.revision)
         _ensure_conditioning(model, package, manifest, device)
-        wav = model.generate(
-            text,
-            language_id=manifest.get("language") or "da",
-            exaggeration=float(defaults.get("exaggeration", 0.5)),
-            cfg_weight=float(defaults.get("cfg_weight", 0.5)),
-            temperature=float(defaults.get("temperature", 0.8)),
-        )
+        generate_kwargs = {
+            "language_id": manifest.get("language") or "da",
+            "exaggeration": float(defaults.get("exaggeration", 0.5)),
+            "cfg_weight": float(defaults.get("cfg_weight", 0.5)),
+            "temperature": float(defaults.get("temperature", 0.8)),
+        }
+        for name in ("repetition_penalty", "min_p", "top_p"):
+            if name in options:
+                generate_kwargs[name] = float(options[name])
+        wav = model.generate(text, **generate_kwargs)
         try:
             import torchaudio as ta
         except Exception as exc:
@@ -174,6 +201,9 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
             "voice_id": manifest["id"],
             "voice": manifest["name"],
             "package": package.name,
+            "engine": spec.name,
+            "model": spec.model,
+            "revision": spec.revision,
             "sample_rate": int(model.sr),
             "duration": duration,
             "device": device,
@@ -184,7 +214,7 @@ def status() -> dict:
     try:
         package = resolve_package()
         manifest = _manifest(package)
-        _runtime_engine(manifest)
+        spec = _runtime_spec(manifest)
     except Exception as exc:
         return {"ok": False, "detail": str(exc), "voice": None, "package": None}
 
@@ -214,5 +244,8 @@ def status() -> dict:
         "voice": manifest.get("name"),
         "voice_id": manifest.get("id"),
         "package": package.name,
+        "engine": spec.name,
+        "model": spec.model,
+        "revision": spec.revision,
         "device": device,
     }

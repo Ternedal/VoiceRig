@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from voicerig.engines.omnivoice import synthesize_omnivoice_danish
 from voicerig.engines.package_runtime import resolve_package, status, synthesize
 from voicerig.engines.rost import synthesize_rost_danish
 from voicerig.profiles.package import validate_package
@@ -68,14 +69,7 @@ def tts_synthesize(req: SynthesizeRequest):
     return Response(content=raw, media_type="audio/wav", headers=headers)
 
 
-@router.post("/api/tts/compare/rost")
-def tts_compare_rost(req: SynthesizeRequest):
-    """Generate a Danish Røst sample without changing the installed voice.
-
-    The source .mrvoice stays untouched. We only extract its validated
-    reference.wav into a private temporary directory and run the pinned Danish
-    checkpoint against the same user-supplied test text.
-    """
+def _resolve_danish_package(req: SynthesizeRequest, engine_label: str) -> tuple[Path, dict]:
     try:
         package = resolve_package(req.voice_package)
         manifest = validate_package(package)
@@ -84,14 +78,29 @@ def tts_compare_rost(req: SynthesizeRequest):
 
     language = str(manifest.get("language") or "").lower().split("-", 1)[0]
     if language != "da":
-        raise HTTPException(status_code=422, detail="Røst-sammenligningen er kun til danske profiler.")
+        raise HTTPException(
+            status_code=422,
+            detail=f"{engine_label}-sammenligningen er kun til danske profiler.",
+        )
+    return package, manifest
+
+
+def _extract_reference(package: Path, root: Path) -> Path:
+    reference = root / "reference.wav"
+    with zipfile.ZipFile(package, "r") as zf:
+        reference.write_bytes(zf.read("reference.wav"))
+    return reference
+
+
+@router.post("/api/tts/compare/rost")
+def tts_compare_rost(req: SynthesizeRequest):
+    """Generate a Danish Røst sample without changing the installed voice."""
+    package, _manifest = _resolve_danish_package(req, "Røst")
 
     try:
         with tempfile.TemporaryDirectory(prefix="voicerig-rost-compare-") as tmp:
             root = Path(tmp)
-            reference = root / "reference.wav"
-            with zipfile.ZipFile(package, "r") as zf:
-                reference.write_bytes(zf.read("reference.wav"))
+            reference = _extract_reference(package, root)
             output = root / "rost.wav"
             meta = synthesize_rost_danish(reference, req.text, output)
             raw = output.read_bytes()
@@ -100,13 +109,44 @@ def tts_compare_rost(req: SynthesizeRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    # HTTP header values must stay byte/ASCII-safe across ASGI servers and test
-    # clients. Keep the human-facing Røst spelling in the UI; transport metadata
-    # is deliberately ASCII-only.
     headers = {
         "X-VoiceRig-Engine": "Roest v3 Chatterbox 500M",
         "X-VoiceRig-Model": _ascii_header(meta["model"]),
         "X-VoiceRig-Revision": _ascii_header(meta["revision"]),
+        "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
+        "X-VoiceRig-Duration": str(meta["duration"]),
+        "X-VoiceRig-Language": _ascii_header(meta["language"]),
+    }
+    return Response(content=raw, media_type="audio/wav", headers=headers)
+
+
+@router.post("/api/tts/compare/omnivoice")
+def tts_compare_omnivoice(req: SynthesizeRequest):
+    """Generate an isolated Danish OmniVoice sample from the same reference.
+
+    The source .mrvoice and ModelRig default stay untouched. OmniVoice runs in a
+    separately versioned local venv/process so its Torch/Transformers stack
+    cannot change the verified Chatterbox runtime.
+    """
+    package, _manifest = _resolve_danish_package(req, "OmniVoice")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="voicerig-omnivoice-compare-") as tmp:
+            root = Path(tmp)
+            reference = _extract_reference(package, root)
+            output = root / "omnivoice.wav"
+            meta = synthesize_omnivoice_danish(reference, req.text, output)
+            raw = output.read_bytes()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    headers = {
+        "X-VoiceRig-Engine": "OmniVoice",
+        "X-VoiceRig-Model": _ascii_header(meta["model"]),
+        "X-VoiceRig-Revision": _ascii_header(meta["model_revision"]),
+        "X-VoiceRig-Source-Revision": _ascii_header(meta["source_revision"]),
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
         "X-VoiceRig-Duration": str(meta["duration"]),
         "X-VoiceRig-Language": _ascii_header(meta["language"]),

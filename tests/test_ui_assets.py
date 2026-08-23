@@ -65,7 +65,7 @@ def test_reference_flow_exposes_real_auditions_and_additive_twenty_file_selectio
     assert "filer valgt" in javascript
 
 
-def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
+def test_danish_engine_compare_flow_is_non_mutating_until_explicit_rost_promotion():
     javascript = (UI_DIR / "danish-engine-compare.js").read_text(encoding="utf-8")
 
     assert "endpoint: '/api/tts/compare/rost'" in javascript
@@ -81,7 +81,13 @@ def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
     assert "'/api/tts/compare/rost/reference'" in javascript
     assert "reference_index: reference.index" in javascript
     assert "samme Røst-model og parametre" in javascript
-    assert "ModelRig" not in javascript
+    assert "Brug ${reference.label} med Røst" in javascript
+    assert "window.confirm" in javascript
+    assert "'/api/tts/rost/promote-reference'" in javascript
+    assert "Pakken erstattes først efter fuld validering" in javascript
+    assert "Afspil nuværende motor" in javascript
+    assert "refreshLibrary()" in javascript
+    assert "refreshSystem()" in javascript
 
 
 def test_ui_javascript_parses_when_node_is_available():

@@ -13,6 +13,7 @@ import voicerig.engines.omnivoice as omnivoice
 from voicerig.model_contract import (
     OMNIVOICE_ASR_REVISION,
     OMNIVOICE_MODEL_REVISION,
+    OMNIVOICE_PACKAGE_VERSION,
     OMNIVOICE_SOURCE_REVISION,
 )
 from voicerig.profiles.package import build_package
@@ -91,6 +92,40 @@ def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
     assert captured_env["HF_HUB_DISABLE_TELEMETRY"] == "1"
     assert output.is_file()
     assert result["model_revision"] == OMNIVOICE_MODEL_REVISION
+
+
+def test_omnivoice_runtime_verifier_requires_exact_pep610_git_commit():
+    code = omnivoice._runtime_verification_code()
+
+    assert "direct_url.json" in code
+    assert "vcs_info" in code
+    assert "commit_id" in code
+    assert "v.get('vcs')=='git'" in code
+    assert OMNIVOICE_SOURCE_REVISION.lower() in code
+    assert OMNIVOICE_PACKAGE_VERSION in code
+
+
+def test_omnivoice_runtime_repairs_a_wrong_or_unverified_source(tmp_path: Path, monkeypatch):
+    root = tmp_path / "omnivoice-runtime"
+    python = root / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    readiness = iter([False, False, True])
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(omnivoice, "_runtime_root", lambda: root)
+    monkeypatch.setattr(omnivoice, "_runtime_python", lambda _root=None: python)
+    monkeypatch.setattr(omnivoice, "_runtime_ready", lambda _python: next(readiness))
+    monkeypatch.setattr(omnivoice, "_run_checked", lambda command, **_kwargs: commands.append(command))
+
+    assert omnivoice.ensure_runtime() == python
+
+    vcs_commands = [command for command in commands if any("git+https://github.com/k2-fsa/OmniVoice.git@" in item for item in command)]
+    assert len(vcs_commands) == 1
+    vcs_command = vcs_commands[0]
+    assert "--force-reinstall" in vcs_command
+    assert "--upgrade" in vcs_command
+    assert f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}" in vcs_command
 
 
 def test_omnivoice_contract_uses_immutable_source_model_and_asr_revisions():

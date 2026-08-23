@@ -9,9 +9,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from voicerig.engines.catalog import ROST_DANISH_ENGINE_SPEC, package_compatibility
 from voicerig.engines.omnivoice import synthesize_omnivoice_danish
 from voicerig.engines.package_runtime import resolve_package, status, synthesize
-from voicerig.engines.rost import synthesize_rost_danish
+from voicerig.engines.rost import build_rost_danish_artifacts, synthesize_rost_danish
+from voicerig.profiles.migration import rebuild_package_for_engine
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats
 
@@ -33,6 +35,10 @@ class VoicePackageRequest(BaseModel):
 
 
 class RostReferenceRequest(SynthesizeRequest):
+    reference_index: int = Field(ge=0, le=5)
+
+
+class RostPromoteReferenceRequest(VoicePackageRequest):
     reference_index: int = Field(ge=0, le=5)
 
 
@@ -61,6 +67,9 @@ def tts_synthesize(req: SynthesizeRequest):
         "X-VoiceRig-Voice": _ascii_header(meta["voice"]),
         "X-VoiceRig-Voice-ID": _ascii_header(meta["voice_id"]),
         "X-VoiceRig-Package": _ascii_header(meta["package"]),
+        "X-VoiceRig-Engine": _ascii_header(meta.get("engine") or ""),
+        "X-VoiceRig-Model": _ascii_header(meta.get("model") or ""),
+        "X-VoiceRig-Revision": _ascii_header(meta.get("revision") or ""),
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
         "X-VoiceRig-Duration": str(meta["duration"]),
         "X-VoiceRig-Device": _ascii_header(meta["device"]),
@@ -170,6 +179,55 @@ def tts_compare_rost_reference(req: RostReferenceRequest):
     """Generate Røst from one stored .mrvoice reference while holding all model controls fixed."""
     package, _manifest = _resolve_danish_package(req.voice_package, "Røst")
     return _rost_response(package, req.text, req.reference_index)
+
+
+@router.post("/api/tts/rost/promote-reference")
+def tts_promote_rost_reference(req: RostPromoteReferenceRequest) -> dict:
+    """Atomically migrate one Danish package to Røst using a stored reference.
+
+    The chosen stored reference becomes the authoritative reference.wav. Røst
+    conditioning and preview are generated before the package is rebuilt in
+    place; rebuild_package_for_engine validates the complete replacement before
+    os.replace, leaving the original package untouched on any earlier failure.
+    """
+    package, source_manifest = _resolve_danish_package(req.voice_package, "Røst")
+    try:
+        with tempfile.TemporaryDirectory(prefix="voicerig-rost-promote-") as tmp:
+            root = Path(tmp)
+            reference = _extract_reference(package, root, req.reference_index)
+            conditioning = root / "conditioning.pt"
+            preview = root / "preview.wav"
+            build_rost_danish_artifacts(reference, conditioning, preview)
+            rebuild_package_for_engine(
+                package,
+                ROST_DANISH_ENGINE_SPEC,
+                conditioning,
+                preview,
+                package,
+                reference_index=req.reference_index,
+            )
+        manifest = validate_package(package)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    compatibility = package_compatibility(manifest)
+    if not compatibility.get("runtime_supported"):
+        raise HTTPException(status_code=500, detail="Den migrerede Røst-profil blev ikke runtime-understøttet.")
+    if str(manifest.get("id")) != str(source_manifest.get("id")):
+        raise HTTPException(status_code=500, detail="Røst-migrationen bevarede ikke voice-id.")
+
+    return {
+        "ok": True,
+        "package": package.name,
+        "voice_id": manifest["id"],
+        "name": manifest["name"],
+        "language": manifest["language"],
+        "reference_index": req.reference_index,
+        "engine": manifest["engine"],
+        "compatibility": compatibility,
+    }
 
 
 @router.post("/api/tts/compare/omnivoice")

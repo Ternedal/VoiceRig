@@ -21,6 +21,7 @@ def test_nonblocking_build_is_rejected_while_shared_gate_is_busy(tmp_path: Path,
         speaker_anchor,
         reference_choice,
         progress,
+        accent=None,
     ):
         entered.set()
         assert release.wait(timeout=3)

@@ -29,6 +29,10 @@ def test_index_references_packaged_assets_and_modelrig_secret_controls():
     assert 'id="rostCompareAudio"' in html
     assert 'id="compareOmniVoice"' in html
     assert 'id="omnivoiceCompareAudio"' in html
+    assert 'id="compareRostReferences"' in html
+    assert 'id="rostReferencePanel"' in html
+    assert 'id="rostReferenceChoices"' in html
+    assert "Kun den gemte reference skifter" in html
 
 
 def test_javascript_uses_secret_safe_modelrig_configuration_contract():
@@ -73,6 +77,10 @@ def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
     assert "setComparisonBusy(true)" in javascript
     assert "synthesizeVoiceButton.disabled = busy" in javascript
     assert "state[`${engine.key}CompareAudioUrl`]" in javascript
+    assert "'/api/tts/compare/rost/references'" in javascript
+    assert "'/api/tts/compare/rost/reference'" in javascript
+    assert "reference_index: reference.index" in javascript
+    assert "samme Røst-model og parametre" in javascript
     assert "ModelRig" not in javascript
 
 

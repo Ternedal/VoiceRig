@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -113,3 +114,15 @@ def test_candidate_contract_function_returns_fresh_nested_data():
     second = candidate_contracts()
 
     assert second["rost"]["generation"]["top_p"] != 0.1
+
+
+def test_engine_decision_wrapper_and_gitignore_keep_evidence_local_by_default():
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "record-engine-decision.ps1").read_text(encoding="utf-8")
+    gitignore = (root / ".gitignore").read_text(encoding="utf-8")
+
+    assert "[ValidateSet(\"chatterbox\", \"rost\", \"omnivoice\", \"none\")]" in script
+    assert "-m\", \"voicerig.engine_decision" in script
+    assert "--test-text" in script
+    assert "engine-decision.json" in script
+    assert "engine-decision.json" in gitignore

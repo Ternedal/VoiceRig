@@ -1,7 +1,7 @@
 (() => {
   const MAX_UI_FILES = 20;
 
-  stageNames.reference_audition = 'Laver danske prøveudtaler';
+  stageNames.reference_audition = 'Laver prøveudtaler';
   stageNames.reference_selection = 'Vælg reference';
 
   const baseRenderFiles = renderFiles;
@@ -25,7 +25,7 @@
         el(
           'div',
           'muted tiny',
-          'Alle afspillere er genereret dansk tale. Vælg den prøve, der lyder mest naturligt som dig — ikke nødvendigvis den med højeste signal-score.',
+          `Alle afspillere er genereret tale med profilens valgte sprog/region (${job.language || 'ukendt'}) og samme produktionsmotor. Vælg den prøve, der bedst bevarer stemmeidentiteten — ikke nødvendigvis den med højeste signal-score.`,
         ),
       );
 
@@ -39,11 +39,12 @@
         const sources = sourceCount > 1
           ? ` · samlet fra ${sourceCount} klip`
           : ' · fra ét klip';
+        const engine = reference.engine_label ? ` · ${reference.engine_label}` : '';
         card.appendChild(
           el(
             'div',
             'voice-name',
-            `${reference.label || `Reference ${reference.choice}`} · ca. ${reference.reference_seconds || '?'} sek. reference${sources}${score}`,
+            `${reference.label || `Reference ${reference.choice}`} · ca. ${reference.reference_seconds || '?'} sek. reference${sources}${engine}${score}`,
           ),
         );
         const audio = document.createElement('audio');

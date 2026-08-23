@@ -18,6 +18,21 @@ ROST_DANISH_REPETITION_PENALTY = 2.0
 ROST_DANISH_MIN_P = 0.05
 ROST_DANISH_TOP_P = 0.95
 
+# Independent Danish A/B/C candidate. OmniVoice uses a separate runtime so its
+# newer Transformers/Torch dependency surface cannot mutate the verified
+# Chatterbox environment. Pin both source and model snapshots so physical
+# listening always compares the same implementation and weights.
+OMNIVOICE_ENGINE = "omnivoice"
+OMNIVOICE_MODEL = "k2-fsa/OmniVoice"
+OMNIVOICE_SOURCE_REVISION = "38e992bc60f85548faeb77e8fa70158ba71deb30"
+OMNIVOICE_PACKAGE_VERSION = "0.2.1"
+OMNIVOICE_MODEL_REVISION = "c5fdb5ccb189668d56333f77ba2629f4cd7535f4"
+OMNIVOICE_ASR_MODEL = "openai/whisper-large-v3-turbo"
+OMNIVOICE_ASR_REVISION = "cf7667b3865845227378e06c611d63789cbcdcce"
+OMNIVOICE_TORCH_VERSION = "2.8.0"
+OMNIVOICE_TORCHAUDIO_VERSION = "2.8.0"
+OMNIVOICE_CUDA_INDEX = "https://download.pytorch.org/whl/cu128"
+
 DEFAULT_TTS_EXAGGERATION = 0.5
 DEFAULT_TTS_CFG_WEIGHT = 0.5
 DEFAULT_TTS_TEMPERATURE = 0.8

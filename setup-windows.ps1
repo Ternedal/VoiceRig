@@ -194,9 +194,13 @@ $DiarPy = ".\.venv-diarization\Scripts\python.exe"
 & $DiarPy -m pip install --upgrade pip setuptools wheel
 if ($LASTEXITCODE -ne 0) { throw "Kunne ikke opdatere pip i diarization-miljøet." }
 
+# Version probes deliberately use importlib.metadata instead of importing
+# pyannote.audio. Importing the package triggers TorchCodec's optional Windows
+# FFmpeg-DLL discovery even though VoiceRig feeds pyannote in-memory PCM16 and
+# never uses TorchCodec for decoding.
 $DiarReady = Test-NativeCommand -FilePath $DiarPy -Arguments @(
     "-c",
-    "import importlib.metadata as m,pyannote.audio,torch,torchaudio,sys; ok=(pyannote.audio.__version__=='4.0.7' and torch.__version__.startswith('2.8.0') and torchaudio.__version__.startswith('2.8.0') and m.version('torchcodec')=='0.7.0' and not torch.cuda.is_available()); sys.exit(0 if ok else 1)"
+    "import importlib.metadata as m,torch,torchaudio,sys; ok=(m.version('pyannote.audio')=='4.0.7' and torch.__version__.startswith('2.8.0') and torchaudio.__version__.startswith('2.8.0') and m.version('torchcodec')=='0.7.0' and not torch.cuda.is_available()); sys.exit(0 if ok else 1)"
 )
 if (-not $DiarReady) {
     Write-Host "Installerer verificeret CPU-runtime til speaker-analyse..."
@@ -208,7 +212,7 @@ if (-not $DiarReady) {
     if ($LASTEXITCODE -ne 0) { throw "pyannote.audio 4.0.7 kunne ikke installeres." }
 }
 
-& $DiarPy -c "import importlib.metadata as m,pyannote.audio,torch,torchaudio; assert pyannote.audio.__version__=='4.0.7'; assert torch.__version__.startswith('2.8.0'); assert torchaudio.__version__.startswith('2.8.0'); assert m.version('torchcodec')=='0.7.0'; assert not torch.cuda.is_available(); print('pyannote {} CPU runtime OK | torch {} | torchaudio {} | torchcodec {}'.format(pyannote.audio.__version__, torch.__version__, torchaudio.__version__, m.version('torchcodec')))"
+& $DiarPy -c "import importlib.metadata as m,torch,torchaudio; assert m.version('pyannote.audio')=='4.0.7'; assert torch.__version__.startswith('2.8.0'); assert torchaudio.__version__.startswith('2.8.0'); assert m.version('torchcodec')=='0.7.0'; assert not torch.cuda.is_available(); print('pyannote {} CPU runtime OK | torch {} | torchaudio {} | torchcodec {}'.format(m.version('pyannote.audio'), torch.__version__, torchaudio.__version__, m.version('torchcodec')))"
 if ($LASTEXITCODE -ne 0) { throw "Det separate pyannote CPU-miljø matcher ikke den verificerede runtime-kontrakt." }
 
 if (-not $SkipModelWarmup) {
@@ -273,5 +277,5 @@ if (-not $Ready.source.root -or -not (Test-SamePath ([string]$Ready.source.root)
 Write-Host ""
 Write-Host "VoiceRig er installeret, modellerne er verificeret og autostart er sat for din Windows-bruger."
 Write-Host "Aktiv service: PID $($Ready.pid) | commit $($Ready.source.revision)"
-Write-Host "GPU-plan: Chatterbox V3 = CUDA; pyannote 4.0.7 / torch 2.8 / torchcodec 0.7 = CPU."
+Write-Host "GPU-plan: Chatterbox V3/Røst = CUDA efter package-manifest; pyannote 4.0.7 / torch 2.8 / torchcodec 0.7 = CPU med in-memory PCM16 input."
 Write-Host "Åbn VoiceRig med: .\start-windows.ps1"

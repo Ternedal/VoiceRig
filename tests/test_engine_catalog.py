@@ -12,6 +12,7 @@ from voicerig.engines.catalog import (
     defaults_for_engine,
     manifest_engine,
     package_compatibility,
+    runtime_engine_spec,
     validate_engine_options,
 )
 from voicerig.model_contract import (
@@ -97,10 +98,11 @@ def test_unknown_engine_may_remain_legacy_but_cannot_smuggle_unvalidated_options
         validate_engine_options(with_options)
 
 
-def test_package_compatibility_distinguishes_direct_rebuild_portable_and_unknown():
+def test_package_compatibility_supports_current_and_pinned_rost_runtime():
     direct = package_compatibility(_manifest(manifest_engine(CURRENT_ENGINE)))
     assert direct["state"] == "direct"
     assert direct["runtime_supported"] is True
+    assert runtime_engine_spec(_manifest(manifest_engine(CURRENT_ENGINE))) == CURRENT_ENGINE
 
     old_revision = manifest_engine(CURRENT_ENGINE)
     old_revision["revision"] = "0" * 40
@@ -108,19 +110,20 @@ def test_package_compatibility_distinguishes_direct_rebuild_portable_and_unknown
     assert rebuild["state"] == "runtime-rebuild"
     assert rebuild["runtime_supported"] is True
     assert rebuild["can_rebuild_from_reference"] is True
+    assert runtime_engine_spec(_manifest(old_revision)) == CURRENT_ENGINE
 
-    rost = package_compatibility(
-        _manifest(manifest_engine(ROST_DANISH_ENGINE_SPEC, include_options=True))
-    )
-    assert rost["state"] == "reference-portable"
-    assert rost["runtime_supported"] is False
+    rost_manifest = _manifest(manifest_engine(ROST_DANISH_ENGINE_SPEC, include_options=True))
+    rost = package_compatibility(rost_manifest)
+    assert rost["state"] == "direct"
+    assert rost["runtime_supported"] is True
     assert rost["can_rebuild_from_reference"] is True
+    assert runtime_engine_spec(rost_manifest) == ROST_DANISH_ENGINE_SPEC
 
-    unknown = package_compatibility(
-        _manifest({"name": "future-engine", "model": "x", "revision": "1" * 40})
-    )
+    unknown_manifest = _manifest({"name": "future-engine", "model": "x", "revision": "1" * 40})
+    unknown = package_compatibility(unknown_manifest)
     assert unknown["state"] == "unsupported"
     assert unknown["can_rebuild_from_reference"] is False
+    assert runtime_engine_spec(unknown_manifest) is None
 
 
 def test_build_package_can_record_pinned_rost_contract_without_changing_v1_payload_shape(tmp_path: Path):

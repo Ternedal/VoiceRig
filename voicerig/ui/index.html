@@ -82,6 +82,7 @@
             <button id="synthesizeVoice" class="secondary" type="button">Afspil nuværende motor</button>
             <button id="compareRostVoice" class="secondary" type="button">A/B: Afspil Røst v3 dansk</button>
             <button id="compareOmniVoice" class="secondary" type="button">A/B/C: Afspil OmniVoice dansk</button>
+            <button id="compareRostReferences" class="secondary" type="button">Røst: test stemmelighed</button>
             <span id="testVoiceStatus" class="muted tiny"></span>
           </div>
           <audio id="testVoiceAudio" controls hidden></audio>
@@ -90,6 +91,12 @@
             <div class="muted tiny">Samme reference og samme tekst som ovenfor. Første kørsel henter kun de nødvendige pinnede Røst-runtimefiler lokalt (ca. 3,2 GB). Det ændrer ikke din .mrvoice eller ModelRig-default.</div>
             <audio id="rostCompareAudio" controls hidden></audio>
             <div id="rostCompareStatus" class="muted tiny"></div>
+          </div>
+          <div id="rostReferencePanel" class="status" hidden>
+            <strong>Røst · stemmelighed</strong>
+            <div class="muted tiny">Samme Røst-model, samme parametre og samme tekst. Kun den gemte reference skifter. Det ændrer ikke profilen; formålet er at finde ud af, om Røst kan ramme stemmen bedre med en af VoiceRigs backup-referencer.</div>
+            <div id="rostReferenceStatus" class="muted tiny"></div>
+            <div id="rostReferenceChoices"></div>
           </div>
           <div id="omnivoiceComparePanel" class="status" hidden>
             <strong>OmniVoice</strong>

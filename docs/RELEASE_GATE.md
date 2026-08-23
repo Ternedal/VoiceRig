@@ -6,10 +6,46 @@ Denne gate køres **kun efter** den fulde fysiske rig-acceptance i
 Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 `.mrvoice` eller WAV-filer til GitHub.
 
-Den konkrete immutable release-ref, commit og grønne CI-runs dokumenteres i
-issue #3 og PR #1. Der hardcodes derfor ikke live SHA eller run-numre i denne fil.
-Hvis den pinned VoiceRig-commit ændres, er tidligere fysisk acceptance stale og
-skal køres igen.
+Den konkrete immutable release-ref, commit og grønne CI-runs dokumenteres i den
+aktuelle autoritative acceptance-issue og PR #1. Der hardcodes derfor ikke live
+SHA eller run-numre i denne fil. Hvis den pinned VoiceRig-commit ændres, er
+tidligere fysisk acceptance stale og skal køres igen.
+
+## 0. Dansk motorbeslutning, når flere kandidater evalueres
+
+Når en release vælger mellem flere danske motorer, registreres lyttebeslutningen
+separat fra den efterfølgende produktions-acceptance:
+
+```powershell
+.\record-engine-decision.ps1 `
+  -Winner rost `
+  -ChatterboxScore 2 `
+  -RostScore 5 `
+  -OmniVoiceScore 4 `
+  -DecisionNote "Røst var klart mest naturlig på dansk og sagde hele teksten" `
+  -ChatterboxNote "Svensk klang" `
+  -RostNote "Naturlig dansk og genkendelig stemme" `
+  -OmniVoiceNote "God accent, men enkelte gentagelser" `
+  -TestText "Hej, jeg taler dansk. Rødgrød med fløde.","København, høre, gøre og selvfølgelig."
+```
+
+Dette opretter `engine-decision.json`. Rapporten binder beslutningen til:
+
+- et clean checkout og dets Git SHA/root,
+- de eksakte Chatterbox-, Røst- og OmniVoice source/model-revisioner,
+- en samlet 1–5-score for alle tre kandidater,
+- en eksplicit winner eller `none`,
+- korte manuelle noter,
+- SHA-256 + længde for de faktiske testtekster.
+
+Rapporten gemmer **ikke** rå testtekster, profilidentitet, source audio eller
+genereret lyd. `engine-decision.json` er Git-ignoreret som standard. En navngiven
+winner skal have en entydigt højere score end de andre; ved uafgjort bruges
+`-Winner none`, så evidence ikke kan påstå en klar vinder, som tallene ikke viser.
+
+Dette beslutningsbevis erstatter ikke den endelige fysiske release-acceptance.
+Når den valgte motor er integreret som produktionsmotor, skal hele acceptance-
+forløbet nedenfor køres igen på den nye immutable release-SHA.
 
 ## 1. Kør hele den automatiske fysiske test
 

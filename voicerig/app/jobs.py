@@ -123,6 +123,7 @@ class VoiceJobManager:
         language: str,
         install_in_modelrig: bool,
         sources: list[tuple[str, Path]],
+        accent: str | None = None,
     ) -> dict:
         if not name.strip():
             raise ValueError("Stemmen skal have et navn.")
@@ -149,6 +150,7 @@ class VoiceJobManager:
                 "message": "Venter på VoiceRig GPU-køen…",
                 "name": name.strip(),
                 "language": language,
+                "accent": accent,
                 "install_in_modelrig": bool(install_in_modelrig),
                 "files": original_names,
                 "inputs": inputs,
@@ -210,6 +212,7 @@ class VoiceJobManager:
                 speaker_anchor=payload.get("speaker_anchor"),
                 reference_choice=payload.get("reference_choice"),
                 progress=lambda stage, percent, message: self._checkpoint(job_id, stage, percent, message),
+                accent=payload.get("accent"),
             )
             self._checkpoint(job_id, "installing", 96, "Installerer profilen i ModelRig…")
 
@@ -229,6 +232,7 @@ class VoiceJobManager:
                     "id": manifest["id"],
                     "name": manifest["name"],
                     "language": manifest["language"],
+                    "accent": manifest.get("accent"),
                 },
                 "package": result.package.name,
                 "download_url": f"/api/packages/{result.package.name}",

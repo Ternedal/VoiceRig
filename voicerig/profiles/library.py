@@ -79,6 +79,7 @@ def _voice_record(name: str, locations: dict[str, Path], default_name: str | Non
         "id": manifest["id"],
         "name": manifest["name"],
         "language": manifest["language"],
+        "accent": manifest.get("accent"),
         "package": name,
         "is_default": name == default_name,
         "in_library": "library" in locations,

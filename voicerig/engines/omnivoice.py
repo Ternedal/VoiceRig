@@ -129,15 +129,24 @@ def ensure_runtime() -> Path:
                 OMNIVOICE_CUDA_INDEX,
             ]
         )
+        vcs_requirement = f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}"
+        # First resolve/install OmniVoice's normal dependency graph while the
+        # explicitly pinned Torch already satisfies its torch>=2.4 contract.
+        # Do not force dependencies: --force-reinstall would allow pip to
+        # replace the CUDA pin with a newer generic torch build.
+        _run_checked([str(python), "-m", "pip", "install", vcs_requirement])
+        # Then force only the VCS root package. --no-deps makes the exact source
+        # repair deterministic without touching Torch or the resolved support
+        # packages installed by the preceding command.
         _run_checked(
             [
                 str(python),
                 "-m",
                 "pip",
                 "install",
-                "--upgrade",
                 "--force-reinstall",
-                f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}",
+                "--no-deps",
+                vcs_requirement,
             ]
         )
         if not _runtime_ready(python):

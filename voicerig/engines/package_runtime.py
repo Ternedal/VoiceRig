@@ -20,6 +20,7 @@ from voicerig.engines.chatterbox import (
     _set_conditioning_key,
     _shared_model,
 )
+from voicerig.languages import engine_language_id
 from voicerig.profiles.package import validate_package
 from voicerig.runtime import chatterbox_device
 
@@ -173,6 +174,8 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
     defaults = manifest.get("defaults") or {}
     engine = manifest.get("engine") or {}
     options = engine.get("options") or {}
+    locale = str(manifest.get("language") or "da")
+    language_id = engine_language_id(locale)
 
     # Model selection, conditioning and generation form one transaction. Røst
     # and general Chatterbox share mutable conditionals and one physical GPU.
@@ -180,7 +183,7 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
         model = _shared_model(spec.model, spec.revision)
         _ensure_conditioning(model, package, manifest, device)
         generate_kwargs = {
-            "language_id": manifest.get("language") or "da",
+            "language_id": language_id,
             "exaggeration": float(defaults.get("exaggeration", 0.5)),
             "cfg_weight": float(defaults.get("cfg_weight", 0.5)),
             "temperature": float(defaults.get("temperature", 0.8)),
@@ -201,6 +204,9 @@ def synthesize(package: Path, text: str, output: Path) -> dict:
             "voice_id": manifest["id"],
             "voice": manifest["name"],
             "package": package.name,
+            "language": locale,
+            "language_id": language_id,
+            "accent": manifest.get("accent"),
             "engine": spec.name,
             "model": spec.model,
             "revision": spec.revision,
@@ -215,6 +221,7 @@ def status() -> dict:
         package = resolve_package()
         manifest = _manifest(package)
         spec = _runtime_spec(manifest)
+        language_id = engine_language_id(str(manifest.get("language") or "da"))
     except Exception as exc:
         return {"ok": False, "detail": str(exc), "voice": None, "package": None}
 
@@ -244,6 +251,9 @@ def status() -> dict:
         "voice": manifest.get("name"),
         "voice_id": manifest.get("id"),
         "package": package.name,
+        "language": manifest.get("language"),
+        "language_id": language_id,
+        "accent": manifest.get("accent"),
         "engine": spec.name,
         "model": spec.model,
         "revision": spec.revision,

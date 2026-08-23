@@ -27,6 +27,8 @@ def test_index_references_packaged_assets_and_modelrig_secret_controls():
     assert 'id="voiceTester"' in html
     assert 'id="compareRostVoice"' in html
     assert 'id="rostCompareAudio"' in html
+    assert 'id="compareOmniVoice"' in html
+    assert 'id="omnivoiceCompareAudio"' in html
 
 
 def test_javascript_uses_secret_safe_modelrig_configuration_contract():
@@ -62,11 +64,16 @@ def test_reference_flow_exposes_real_auditions_and_additive_twenty_file_selectio
 def test_danish_engine_compare_flow_is_explicit_and_non_mutating():
     javascript = (UI_DIR / "danish-engine-compare.js").read_text(encoding="utf-8")
 
-    assert "fetch('/api/tts/compare/rost'" in javascript
+    assert "endpoint: '/api/tts/compare/rost'" in javascript
+    assert "endpoint: '/api/tts/compare/omnivoice'" in javascript
+    assert "fetch(engine.endpoint" in javascript
     assert "voice_package: voice.package" in javascript
     assert "3,2 GB" in javascript
+    assert "isoleret runtime-miljø" in javascript
+    assert "setComparisonBusy(true)" in javascript
+    assert "synthesizeVoiceButton.disabled = busy" in javascript
+    assert "state[`${engine.key}CompareAudioUrl`]" in javascript
     assert "ModelRig" not in javascript
-    assert "state.rostCompareAudioUrl" in javascript
 
 
 def test_ui_javascript_parses_when_node_is_available():

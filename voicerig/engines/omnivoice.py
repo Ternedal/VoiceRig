@@ -63,19 +63,34 @@ def _run_checked(command: list[str], *, timeout: int = _RUNTIME_TIMEOUT_SECONDS)
         raise OmniVoiceUnavailable(f"OmniVoice-runtime kunne ikke klargøres: {detail}")
 
 
-def _runtime_ready(python: Path) -> bool:
-    if not python.is_file():
-        return False
-    code = (
-        "import importlib.metadata as m,torch,torchaudio,sys; "
-        f"ok=(m.version('omnivoice')=='{OMNIVOICE_PACKAGE_VERSION}' "
+def _runtime_verification_code() -> str:
+    """Return the fail-closed verifier executed inside the isolated runtime.
+
+    Package version alone is not a release identity: multiple VCS commits can
+    all report OmniVoice 0.2.1. PEP 610 requires pip VCS installs to retain
+    direct_url.json with the resolved commit_id, so physical acceptance can
+    prove the runtime uses the exact source revision pinned by VoiceRig.
+    """
+    return (
+        "import importlib.metadata as m,json,torch,torchaudio,sys; "
+        "d=m.distribution('omnivoice'); "
+        "raw=d.read_text('direct_url.json') or '{}'; "
+        "u=json.loads(raw); v=u.get('vcs_info') or {}; "
+        f"ok=(d.version=='{OMNIVOICE_PACKAGE_VERSION}' "
+        "and v.get('vcs')=='git' "
+        f"and (v.get('commit_id') or '').lower()=='{OMNIVOICE_SOURCE_REVISION.lower()}' "
         f"and torch.__version__.startswith('{OMNIVOICE_TORCH_VERSION}') "
         f"and torchaudio.__version__.startswith('{OMNIVOICE_TORCHAUDIO_VERSION}') "
         "and torch.cuda.is_available()); sys.exit(0 if ok else 1)"
     )
+
+
+def _runtime_ready(python: Path) -> bool:
+    if not python.is_file():
+        return False
     try:
         proc = subprocess.run(
-            [str(python), "-c", code],
+            [str(python), "-c", _runtime_verification_code()],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -120,12 +135,14 @@ def ensure_runtime() -> Path:
                 "-m",
                 "pip",
                 "install",
+                "--upgrade",
+                "--force-reinstall",
                 f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}",
             ]
         )
         if not _runtime_ready(python):
             raise OmniVoiceUnavailable(
-                "OmniVoice-runtime blev installeret, men CUDA/version-kontrakten kunne ikke verificeres."
+                "OmniVoice-runtime blev installeret, men exact-source/CUDA/version-kontrakten kunne ikke verificeres."
             )
     return python
 

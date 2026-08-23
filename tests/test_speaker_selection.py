@@ -97,8 +97,9 @@ def test_explicit_choice_builds_selected_voice_without_ambiguity_loop(tmp_path: 
     monkeypatch.setattr(pipeline, "diarize_many", _ambiguous_results)
 
     class FakeEngine:
-        def __init__(self, language="da"):
+        def __init__(self, language="en-US", accent=None):
             self.language = language
+            self.accent = accent
 
         def build_artifacts(self, reference: Path, conditioning: Path, preview: Path):
             conditioning.write_bytes(b"conditioning")
@@ -107,10 +108,14 @@ def test_explicit_choice_builds_selected_voice_without_ambiguity_loop(tmp_path: 
 
     monkeypatch.setattr(pipeline, "ChatterboxEngine", FakeEngine)
 
+    # Speaker selection itself is engine-neutral. Use a non-Danish locale so
+    # this test does not load the production Røst runtime merely because Danish
+    # is now correctly routed to Røst by default.
     result = pipeline.create_voice(
         "Valgt stemme",
         [source],
         tmp_path / "out",
+        language="en-US",
         speaker_anchor="0:9.000",
     )
 

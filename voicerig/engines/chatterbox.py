@@ -4,6 +4,7 @@ import gc
 import threading
 from pathlib import Path
 
+from voicerig.languages import engine_language_id, preview_text, validate_accent
 from voicerig.model_contract import (
     CHATTERBOX_MODEL,
     CHATTERBOX_SOURCE_REVISION,
@@ -157,8 +158,10 @@ def _save_pcm16(ta, path: Path, wav, sample_rate: int) -> None:
 
 
 class ChatterboxEngine:
-    def __init__(self, language: str = "da") -> None:
+    def __init__(self, language: str = "da", accent: str | None = None) -> None:
         self.language = language
+        self.language_id = engine_language_id(language)
+        self.accent = validate_accent(language, accent)
 
     def build_conditioning(self, reference_wav: Path, output: Path) -> Path:
         defaults = tts_defaults(self.language)
@@ -180,13 +183,15 @@ class ChatterboxEngine:
         `reference_wav` remains in the signature to keep the engine call stable,
         but passing it to Chatterbox.generate would call prepare_conditionals a
         second time. The normal build contract is build_conditioning -> preview.
+        Locale/accent metadata never masquerades as a Chatterbox language ID:
+        e.g. en-US/new-york-city is generated with upstream language_id='en'.
         """
         del reference_wav
         try:
             import torchaudio as ta
         except Exception as exc:  # pragma: no cover
             raise ChatterboxUnavailable("torchaudio mangler i Chatterbox-installationen.") from exc
-        text = "Hej. Dette er en prøve på den nye stemme i ModelRig."
+        text = preview_text(self.language)
         defaults = tts_defaults(self.language)
         with _MODEL_RUN_LOCK:
             model = _shared_model()
@@ -194,7 +199,7 @@ class ChatterboxEngine:
                 raise RuntimeError("Preview kræver forberedt voice conditioning.")
             wav = model.generate(
                 text,
-                language_id=self.language,
+                language_id=self.language_id,
                 exaggeration=defaults["exaggeration"],
                 cfg_weight=defaults["cfg_weight"],
                 temperature=defaults["temperature"],

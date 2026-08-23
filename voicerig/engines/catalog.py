@@ -68,6 +68,7 @@ ROST_DANISH_ENGINE_SPEC = EngineSpec(
 )
 
 KNOWN_ENGINES = (CURRENT_ENGINE, ROST_DANISH_ENGINE_SPEC)
+RUNTIME_ENGINES = (CURRENT_ENGINE, ROST_DANISH_ENGINE_SPEC)
 
 
 def _identity(engine: Mapping | None) -> tuple[str, str, str | None]:
@@ -84,6 +85,26 @@ def exact_engine_spec(engine: Mapping | None) -> EngineSpec | None:
     for spec in KNOWN_ENGINES:
         if identity == spec.identity:
             return spec
+    return None
+
+
+def runtime_engine_spec(manifest: Mapping) -> EngineSpec | None:
+    """Resolve the exact model VoiceRig may execute for one validated package.
+
+    Exact pinned current and Røst packages are runtime-supported. Historical
+    current-Chatterbox packages with the same engine/model remain portable by
+    rebuilding conditioning from reference.wav on the current source revision.
+    Unknown engines never fall back silently.
+    """
+    engine = manifest.get("engine") if isinstance(manifest, Mapping) else None
+    mapping = engine if isinstance(engine, Mapping) else None
+    known = exact_engine_spec(mapping)
+    if known is not None and any(known.identity == spec.identity for spec in RUNTIME_ENGINES):
+        return known
+
+    identity = _identity(mapping)
+    if identity[0] == CURRENT_ENGINE.name and identity[1] == CURRENT_ENGINE.model:
+        return CURRENT_ENGINE
     return None
 
 
@@ -148,16 +169,17 @@ def defaults_for_engine(spec: EngineSpec, language: str) -> dict[str, float]:
 def package_compatibility(manifest: Mapping) -> dict:
     """Describe runtime compatibility without mutating or migrating a profile."""
     engine = manifest.get("engine") if isinstance(manifest, Mapping) else None
-    identity = _identity(engine if isinstance(engine, Mapping) else None)
-    current = CURRENT_ENGINE.identity
+    mapping = engine if isinstance(engine, Mapping) else None
+    identity = _identity(mapping)
 
-    if identity == current:
+    exact = exact_engine_spec(mapping)
+    if exact is not None and runtime_engine_spec(manifest) is not None:
         return {
             "state": "direct",
             "runtime_supported": True,
             "can_rebuild_from_reference": True,
             "known_engine": True,
-            "detail": "Profilens engine og revision matcher den aktive runtime.",
+            "detail": f"Profilens engine og revision matcher den understøttede runtime: {exact.label}.",
         }
 
     if identity[0] == CURRENT_ENGINE.name and identity[1] == CURRENT_ENGINE.model:
@@ -166,17 +188,17 @@ def package_compatibility(manifest: Mapping) -> dict:
             "runtime_supported": True,
             "can_rebuild_from_reference": True,
             "known_engine": True,
-            "detail": "Conditioning skal regenereres fra reference.wav for den aktive revision.",
+            "detail": "Conditioning skal regenereres fra reference.wav for den aktive Chatterbox-revision.",
         }
 
-    known = exact_engine_spec(engine if isinstance(engine, Mapping) else None)
+    known = exact_engine_spec(mapping)
     if known is not None:
         return {
             "state": "reference-portable",
             "runtime_supported": False,
             "can_rebuild_from_reference": True,
             "known_engine": True,
-            "detail": f"Profilens reference.wav kan genbruges med {known.label}, men motoren er ikke produktionsaktiv endnu.",
+            "detail": f"Profilens reference.wav kan genbruges med {known.label}, men motoren er ikke runtime-aktiv.",
         }
 
     return {

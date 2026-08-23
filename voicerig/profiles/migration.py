@@ -28,6 +28,7 @@ def migration_plan(package: Path, target_engine: EngineSpec) -> dict:
         "voice_id": manifest["id"],
         "name": manifest["name"],
         "language": manifest["language"],
+        "accent": manifest.get("accent"),
         "source_engine": manifest.get("engine") or {},
         "target_engine": manifest_engine(
             target_engine,
@@ -35,6 +36,7 @@ def migration_plan(package: Path, target_engine: EngineSpec) -> dict:
         ),
         "preserves_voice_id": True,
         "preserves_reference": True,
+        "preserves_accent": True,
         "reference_count": len(members),
         "backup_reference_count": max(0, len(members) - 1),
         "requires_new_conditioning": True,
@@ -93,4 +95,5 @@ def rebuild_package_for_engine(
             alternatives=alternatives,
             engine_spec=target_engine,
             voice_id=str(manifest["id"]),
+            accent=manifest.get("accent"),
         )

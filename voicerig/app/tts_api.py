@@ -28,6 +28,14 @@ class SynthesizeRequest(BaseModel):
     voice_package: str | None = None
 
 
+class VoicePackageRequest(BaseModel):
+    voice_package: str | None = None
+
+
+class RostReferenceRequest(SynthesizeRequest):
+    reference_index: int = Field(ge=0, le=5)
+
+
 @router.get("/api/tts/status")
 def tts_status() -> dict:
     return status()
@@ -69,9 +77,9 @@ def tts_synthesize(req: SynthesizeRequest):
     return Response(content=raw, media_type="audio/wav", headers=headers)
 
 
-def _resolve_danish_package(req: SynthesizeRequest, engine_label: str) -> tuple[Path, dict]:
+def _resolve_danish_package(voice_package: str | None, engine_label: str) -> tuple[Path, dict]:
     try:
-        package = resolve_package(req.voice_package)
+        package = resolve_package(voice_package)
         manifest = validate_package(package)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -85,24 +93,37 @@ def _resolve_danish_package(req: SynthesizeRequest, engine_label: str) -> tuple[
     return package, manifest
 
 
-def _extract_reference(package: Path, root: Path) -> Path:
-    reference = root / "reference.wav"
+def _reference_members(package: Path) -> list[str]:
+    """Return the validated primary reference followed by stored alternatives."""
     with zipfile.ZipFile(package, "r") as zf:
-        reference.write_bytes(zf.read("reference.wav"))
+        names = set(zf.namelist())
+    members = ["reference.wav"]
+    members.extend(
+        name
+        for name in (f"references/candidate_{idx:02d}.wav" for idx in range(1, 6))
+        if name in names
+    )
+    return members
+
+
+def _extract_reference(package: Path, root: Path, reference_index: int = 0) -> Path:
+    members = _reference_members(package)
+    if reference_index < 0 or reference_index >= len(members):
+        raise ValueError("Den valgte Røst-reference findes ikke i stemmeprofilen.")
+    member = members[reference_index]
+    reference = root / f"reference-{reference_index:02d}.wav"
+    with zipfile.ZipFile(package, "r") as zf:
+        reference.write_bytes(zf.read(member))
     return reference
 
 
-@router.post("/api/tts/compare/rost")
-def tts_compare_rost(req: SynthesizeRequest):
-    """Generate a Danish Røst sample without changing the installed voice."""
-    package, _manifest = _resolve_danish_package(req, "Røst")
-
+def _rost_response(package: Path, text: str, reference_index: int = 0) -> Response:
     try:
         with tempfile.TemporaryDirectory(prefix="voicerig-rost-compare-") as tmp:
             root = Path(tmp)
-            reference = _extract_reference(package, root)
+            reference = _extract_reference(package, root, reference_index)
             output = root / "rost.wav"
-            meta = synthesize_rost_danish(reference, req.text, output)
+            meta = synthesize_rost_danish(reference, text, output)
             raw = output.read_bytes()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -116,8 +137,39 @@ def tts_compare_rost(req: SynthesizeRequest):
         "X-VoiceRig-Sample-Rate": str(meta["sample_rate"]),
         "X-VoiceRig-Duration": str(meta["duration"]),
         "X-VoiceRig-Language": _ascii_header(meta["language"]),
+        "X-VoiceRig-Reference-Index": str(reference_index),
     }
     return Response(content=raw, media_type="audio/wav", headers=headers)
+
+
+@router.post("/api/tts/compare/rost")
+def tts_compare_rost(req: SynthesizeRequest):
+    """Generate a Danish Røst sample without changing the installed voice."""
+    package, _manifest = _resolve_danish_package(req.voice_package, "Røst")
+    return _rost_response(package, req.text, 0)
+
+
+@router.post("/api/tts/compare/rost/references")
+def tts_compare_rost_references(req: VoicePackageRequest) -> dict:
+    """List package references available for non-mutating Røst identity auditions."""
+    package, _manifest = _resolve_danish_package(req.voice_package, "Røst")
+    members = _reference_members(package)
+    return {
+        "references": [
+            {
+                "index": index,
+                "label": "Røst reference 1 (primær)" if index == 0 else f"Røst reference {index + 1}",
+            }
+            for index, _member in enumerate(members)
+        ]
+    }
+
+
+@router.post("/api/tts/compare/rost/reference")
+def tts_compare_rost_reference(req: RostReferenceRequest):
+    """Generate Røst from one stored .mrvoice reference while holding all model controls fixed."""
+    package, _manifest = _resolve_danish_package(req.voice_package, "Røst")
+    return _rost_response(package, req.text, req.reference_index)
 
 
 @router.post("/api/tts/compare/omnivoice")
@@ -128,7 +180,7 @@ def tts_compare_omnivoice(req: SynthesizeRequest):
     separately versioned local venv/process so its Torch/Transformers stack
     cannot change the verified Chatterbox runtime.
     """
-    package, _manifest = _resolve_danish_package(req, "OmniVoice")
+    package, _manifest = _resolve_danish_package(req.voice_package, "OmniVoice")
 
     try:
         with tempfile.TemporaryDirectory(prefix="voicerig-omnivoice-compare-") as tmp:

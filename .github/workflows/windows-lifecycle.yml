@@ -1,0 +1,195 @@
+name: windows-lifecycle
+on:
+  push:
+  pull_request:
+
+jobs:
+  ownership-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Model warmup stderr capture smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $InstallPath = Join-Path $PWD.Path "install-windows.ps1"
+          $Tokens = $null
+          $Errors = $null
+          $Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            $InstallPath,
+            [ref]$Tokens,
+            [ref]$Errors
+          )
+          if ($Errors.Count -gt 0) { throw "install-windows.ps1 kunne ikke parses til warmup-smoke." }
+          $Functions = @($Ast.FindAll({
+            param($Node)
+            $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $Node.Name -eq "Invoke-ModelWarmup"
+          }, $true))
+          if ($Functions.Count -ne 1) { throw "Invoke-ModelWarmup var ikke entydig i install-windows.ps1." }
+          Invoke-Expression $Functions[0].Extent.Text
+
+          $FakePython = Join-Path $env:RUNNER_TEMP "voicerig-fake-python.cmd"
+          @"
+          @echo off
+          echo synthetic warmup stderr 1>&2
+          exit /b 23
+          "@ | Set-Content -LiteralPath $FakePython -Encoding Ascii
+
+          $Failure = Invoke-ModelWarmup $FakePython
+          if ($Failure.Ok -ne $false) { throw "Warmup-capture mistede non-zero exit code." }
+          if ($Failure.Text -notmatch "synthetic warmup stderr") { throw "Warmup-capture mistede stderr-diagnostikken." }
+
+          @"
+          @echo off
+          echo synthetic warning stderr 1>&2
+          exit /b 0
+          "@ | Set-Content -LiteralPath $FakePython -Encoding Ascii
+
+          $Success = Invoke-ModelWarmup $FakePython
+          if ($Success.Ok -ne $true) { throw "Warmup-capture gjorde stderr med exit 0 til en fejl." }
+          if ($Success.Text -notmatch "synthetic warning stderr") { throw "Warmup-capture mistede warning-stderr." }
+          Write-Host "Windows PowerShell 5.1 model warmup stderr capture: PASS"
+      - name: Start stale foreign and uninstall ownership smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $CheckoutA = $PWD.Path
+          $Head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $Head) { throw "Kunne ikke læse checkout A HEAD." }
+          $CheckoutB = Join-Path $env:RUNNER_TEMP "voicerig-foreign-checkout"
+          $PidA = $null
+
+          function Same-Path([string]$Left, [string]$Right) {
+            return [string]::Equals(
+              [System.IO.Path]::GetFullPath($Left).TrimEnd('\'),
+              [System.IO.Path]::GetFullPath($Right).TrimEnd('\'),
+              [System.StringComparison]::OrdinalIgnoreCase
+            )
+          }
+
+          function Read-Health {
+            try {
+              return Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+            } catch {
+              return $null
+            }
+          }
+
+          try {
+            python -m venv .venv
+            $PythonA = Join-Path $CheckoutA ".venv\Scripts\python.exe"
+            & $PythonA -m pip install -e .
+            if ($LASTEXITCODE -ne 0) { throw "Checkout A editable installation fejlede." }
+
+            $env:VOICERIG_DATA_DIR = Join-Path $env:RUNNER_TEMP "voicerig-lifecycle-data-a"
+            $env:VOICERIG_ALLOW_LAN = "0"
+            & (Join-Path $CheckoutA "start-windows.ps1") -NoBrowser
+
+            $HealthA = Read-Health
+            if (-not $HealthA -or $HealthA.ok -ne $true -or $HealthA.service -ne "voicerig") {
+              throw "Checkout A VoiceRig startede ikke."
+            }
+            if (-not (Same-Path ([string]$HealthA.source.root) $CheckoutA)) {
+              throw "Checkout A rapporterede forkert startup root."
+            }
+            if ($HealthA.source.revision -ne $Head -or $HealthA.source.dirty -ne $false) {
+              throw "Checkout A rapporterede forkert startup Git-identitet."
+            }
+            $PidA = [int]$HealthA.pid
+
+            # A running process must keep the HEAD it actually started from.
+            & git -c user.name=VoiceRig-CI -c user.email=ci@example.invalid commit --allow-empty -m "lifecycle stale identity probe"
+            if ($LASTEXITCODE -ne 0) { throw "Kunne ikke oprette midlertidig stale-HEAD probe." }
+            $NewHead = (& git rev-parse HEAD).Trim()
+            if ($NewHead -eq $Head) { throw "Stale-HEAD probe ændrede ikke HEAD." }
+
+            $RejectedStale = $false
+            try {
+              & (Join-Path $CheckoutA "start-windows.ps1") -NoBrowser
+            } catch {
+              if ($_.Exception.Message -like "*anden eller dirty Git-tilstand*") {
+                $RejectedStale = $true
+              } else {
+                throw
+              }
+            }
+            if (-not $RejectedStale) {
+              throw "start-windows.ps1 accepterede en stale proces efter checkout HEAD ændrede sig."
+            }
+            & git reset --hard $Head
+            if ($LASTEXITCODE -ne 0) { throw "Kunne ikke gendanne checkout A efter stale-HEAD probe." }
+            $StillA = Read-Health
+            if (-not $StillA -or [int]$StillA.pid -ne $PidA -or $StillA.source.revision -ne $Head) {
+              throw "Stale-startkontrollen muterede den verificerede service."
+            }
+
+            if (Test-Path -LiteralPath $CheckoutB) { Remove-Item -LiteralPath $CheckoutB -Recurse -Force }
+            & git worktree add --detach $CheckoutB $Head
+            if ($LASTEXITCODE -ne 0) { throw "Kunne ikke oprette checkout B." }
+            Push-Location $CheckoutB
+            try {
+              python -m venv .venv
+              $PythonB = Join-Path $CheckoutB ".venv\Scripts\python.exe"
+              & $PythonB -m pip install -e .
+              if ($LASTEXITCODE -ne 0) { throw "Checkout B editable installation fejlede." }
+
+              $RejectedForeign = $false
+              try {
+                & (Join-Path $CheckoutB "start-windows.ps1") -NoBrowser
+              } catch {
+                if ($_.Exception.Message -like "*tilhører en anden checkout*") {
+                  $RejectedForeign = $true
+                } else {
+                  throw
+                }
+              }
+              if (-not $RejectedForeign) {
+                throw "Checkout B start accepterede fejlagtigt checkout A-servicen."
+              }
+
+              & (Join-Path $CheckoutB "uninstall-windows.ps1") -KeepSecrets
+              if (Test-Path -LiteralPath (Join-Path $CheckoutB ".venv")) {
+                throw "Checkout B uninstall fjernede ikke sin egen runtime."
+              }
+            } finally {
+              Pop-Location
+            }
+
+            $AfterForeignUninstall = Read-Health
+            if (-not $AfterForeignUninstall -or [int]$AfterForeignUninstall.pid -ne $PidA) {
+              throw "Checkout B uninstall stoppede fejlagtigt checkout A-servicen."
+            }
+            if (-not (Same-Path ([string]$AfterForeignUninstall.source.root) $CheckoutA)) {
+              throw "Checkout A service-identitet ændrede sig efter foreign uninstall."
+            }
+
+            & (Join-Path $CheckoutA "uninstall-windows.ps1") -KeepSecrets
+            if (Test-Path -LiteralPath (Join-Path $CheckoutA ".venv")) {
+              throw "Checkout A uninstall fjernede ikke sin egen runtime."
+            }
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              if (-not (Read-Health)) { break }
+            }
+            if (Read-Health) {
+              throw "Checkout A uninstall efterlod VoiceRig på port 8765."
+            }
+
+            Write-Host "Windows start/stale/foreign/uninstall lifecycle ownership: PASS"
+          } finally {
+            $Health = Read-Health
+            if ($Health -and $Health.pid) {
+              Stop-Process -Id ([int]$Health.pid) -Force -ErrorAction SilentlyContinue
+            }
+            Get-Process -Name "voicerig" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $CheckoutB) {
+              & git worktree remove --force $CheckoutB 2>$null
+              if (Test-Path -LiteralPath $CheckoutB) {
+                Remove-Item -LiteralPath $CheckoutB -Recurse -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }

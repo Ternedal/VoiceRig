@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import threading
+import zipfile
+from pathlib import Path
+
+from voicerig.config import data_dir
+from voicerig.engines.catalog import (
+    CURRENT_ENGINE,
+    defaults_for_engine,
+    package_compatibility,
+    runtime_engine_spec,
+)
+from voicerig.engines.chatterbox import (
+    _MODEL_RUN_LOCK,
+    _conditioning_key,
+    _save_pcm16,
+    _set_conditioning_key,
+    _shared_model,
+)
+from voicerig.languages import engine_language_id
+from voicerig.profiles.package import validate_package
+from voicerig.runtime import chatterbox_device
+
+_ACTIVE_LOCK = threading.Lock()
+_VALIDATION_LOCK = threading.Lock()
+_VALIDATION_CACHE: dict[tuple[str, int, int], dict] = {}
+
+
+def modelrig_voices_dir() -> Path:
+    value = os.getenv("MODELRIG_VOICES_DIR", "~/.kaliv/voices")
+    path = Path(value).expanduser().resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _manifest(package: Path) -> dict:
+    stat = package.stat()
+    key = (str(package.resolve()), stat.st_mtime_ns, stat.st_size)
+    with _VALIDATION_LOCK:
+        cached = _VALIDATION_CACHE.get(key)
+        if cached is not None:
+            return cached
+    manifest = validate_package(package)
+    with _VALIDATION_LOCK:
+        path_key = key[0]
+        for old in [item for item in _VALIDATION_CACHE if item[0] == path_key and item != key]:
+            _VALIDATION_CACHE.pop(old, None)
+        _VALIDATION_CACHE[key] = manifest
+    return manifest
+
+
+def resolve_package(voice_package: str | None = None) -> Path:
+    root = modelrig_voices_dir()
+    if voice_package:
+        safe = Path(voice_package).name
+        if safe != voice_package or not safe.endswith(".mrvoice"):
+            raise ValueError("Ugyldigt voice package-navn.")
+        candidate = root / safe
+        if not candidate.is_file():
+            raise ValueError("Den valgte stemmeprofil findes ikke.")
+        _manifest(candidate)
+        return candidate
+
+    marker = root / "default.txt"
+    if marker.is_file():
+        name = marker.read_text(encoding="utf-8").strip()
+        if name and Path(name).name == name and name.endswith(".mrvoice"):
+            candidate = root / name
+            if candidate.is_file():
+                _manifest(candidate)
+                return candidate
+
+    profiles = sorted(root.glob("*.mrvoice"))
+    if len(profiles) == 1:
+        _manifest(profiles[0])
+        return profiles[0]
+    if not profiles:
+        raise ValueError("Ingen ModelRig-stemmeprofil er installeret.")
+    raise ValueError("Flere stemmer er installeret, men ingen er valgt som default.")
+
+
+def _materialize(package: Path, manifest: dict) -> Path:
+    root = data_dir() / "tts-runtime" / str(manifest["id"])
+    root.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(package, "r") as zf:
+        for name in ("reference.wav", "conditioning.pt"):
+            target = root / name
+            raw = zf.read(name)
+            if not target.exists() or target.read_bytes() != raw:
+                temp = target.with_suffix(target.suffix + ".tmp")
+                temp.write_bytes(raw)
+                os.replace(temp, target)
+    return root
+
+
+def _runtime_engine(manifest: dict) -> dict:
+    engine = manifest.get("engine") or {}
+    compatibility = package_compatibility(manifest)
+    if not compatibility["runtime_supported"]:
+        raise RuntimeError(compatibility["detail"])
+    if runtime_engine_spec(manifest) is None:
+        raise RuntimeError("Stemmeprofilens engine kan ikke matches sikkert til en pinnet runtime.")
+    return engine
+
+
+def _runtime_spec(manifest: dict):
+    _runtime_engine(manifest)
+    spec = runtime_engine_spec(manifest)
+    if spec is None:  # defensive: _runtime_engine already rejects this state
+        raise RuntimeError("Stemmeprofilens engine kan ikke matches sikkert til en pinnet runtime.")
+    return spec
+
+
+def _package_conditioning_key(package: Path, manifest: dict, device: str) -> tuple[str, ...]:
+    stat = package.stat()
+    engine = manifest.get("engine") or {}
+    return (
+        "package",
+        str(manifest["id"]),
+        str(engine.get("model") or "legacy"),
+        str(engine.get("revision") or "legacy"),
+        str(package.resolve()),
+        str(stat.st_mtime_ns),
+        str(stat.st_size),
+        device,
+    )
+
+
+def _ensure_conditioning(model, package: Path, manifest: dict, device: str) -> None:
+    engine = _runtime_engine(manifest)
+    spec = _runtime_spec(manifest)
+    key = _package_conditioning_key(package, manifest, device)
+    with _ACTIVE_LOCK:
+        if _conditioning_key() == key and model.conds is not None:
+            return
+        cache = _materialize(package, manifest)
+        # conditioning.pt is model/revision-specific. Exact pinned packages may
+        # load it directly; historical current-Chatterbox packages rebuild from
+        # their authoritative reference.wav instead of guessing compatibility.
+        can_load_serialized = (
+            engine.get("model") == spec.model
+            and engine.get("revision") == spec.revision
+        )
+        if can_load_serialized:
+            try:
+                from chatterbox.mtl_tts import Conditionals
+                model.conds = Conditionals.load(
+                    cache / "conditioning.pt",
+                    map_location=device,
+                ).to(device)
+            except Exception:
+                model.conds = None
+        else:
+            model.conds = None
+
+        if model.conds is None:
+            shared = defaults_for_engine(spec, str(manifest.get("language") or "da"))
+            model.prepare_conditionals(
+                str(cache / "reference.wav"),
+                exaggeration=float(shared["exaggeration"]),
+            )
+            if model.conds is None:
+                raise RuntimeError(f"{spec.label} kunne ikke oprette conditioning fra reference.wav")
+        _set_conditioning_key(key)
+
+
+def synthesize(package: Path, text: str, output: Path) -> dict:
+    manifest = _manifest(package)
+    spec = _runtime_spec(manifest)
+    device = chatterbox_device()
+    defaults = manifest.get("defaults") or {}
+    engine = manifest.get("engine") or {}
+    options = engine.get("options") or {}
+    locale = str(manifest.get("language") or "da")
+    language_id = engine_language_id(locale)
+
+    # Model selection, conditioning and generation form one transaction. Røst
+    # and general Chatterbox share mutable conditionals and one physical GPU.
+    with _MODEL_RUN_LOCK:
+        model = _shared_model(spec.model, spec.revision)
+        _ensure_conditioning(model, package, manifest, device)
+        generate_kwargs = {
+            "language_id": language_id,
+            "exaggeration": float(defaults.get("exaggeration", 0.5)),
+            "cfg_weight": float(defaults.get("cfg_weight", 0.5)),
+            "temperature": float(defaults.get("temperature", 0.8)),
+        }
+        for name in ("repetition_penalty", "min_p", "top_p"):
+            if name in options:
+                generate_kwargs[name] = float(options[name])
+        wav = model.generate(text, **generate_kwargs)
+        try:
+            import torchaudio as ta
+        except Exception as exc:
+            raise RuntimeError("torchaudio mangler i VoiceRig-runtime.") from exc
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _save_pcm16(ta, output, wav, model.sr)
+        frames = int(wav.shape[-1])
+        duration = round(frames / int(model.sr), 3) if model.sr else 0.0
+        return {
+            "voice_id": manifest["id"],
+            "voice": manifest["name"],
+            "package": package.name,
+            "language": locale,
+            "language_id": language_id,
+            "accent": manifest.get("accent"),
+            "engine": spec.name,
+            "model": spec.model,
+            "revision": spec.revision,
+            "sample_rate": int(model.sr),
+            "duration": duration,
+            "device": device,
+        }
+
+
+def status() -> dict:
+    try:
+        package = resolve_package()
+        manifest = _manifest(package)
+        spec = _runtime_spec(manifest)
+        language_id = engine_language_id(str(manifest.get("language") or "da"))
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc), "voice": None, "package": None}
+
+    try:
+        chatterbox_installed = importlib.util.find_spec("chatterbox.mtl_tts") is not None
+    except (ImportError, ModuleNotFoundError):
+        chatterbox_installed = False
+    if not chatterbox_installed:
+        return {
+            "ok": False,
+            "detail": "chatterbox-tts er ikke installeret i VoiceRig-miljøet",
+            "voice": manifest.get("name"),
+            "package": package.name,
+        }
+    try:
+        device = chatterbox_device()
+    except RuntimeError as exc:
+        return {
+            "ok": False,
+            "detail": str(exc),
+            "voice": manifest.get("name"),
+            "package": package.name,
+        }
+    return {
+        "ok": True,
+        "detail": None,
+        "voice": manifest.get("name"),
+        "voice_id": manifest.get("id"),
+        "package": package.name,
+        "language": manifest.get("language"),
+        "language_id": language_id,
+        "accent": manifest.get("accent"),
+        "engine": spec.name,
+        "model": spec.model,
+        "revision": spec.revision,
+        "device": device,
+    }

@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""CPU-only pyannote worker used from VoiceRig's separate diarization venv.
+
+Why a subprocess? Chatterbox and current pyannote have incompatible torch
+requirements. Keeping them in separate venvs avoids an unsatisfiable dependency
+graph and also keeps diarization off the 12 GB GPU.
+
+VoiceRig always feeds this worker canonical mono PCM16 WAV produced by FFmpeg.
+The worker decodes that simple WAV with Python's standard library and gives
+pyannote an in-memory waveform dictionary. This deliberately bypasses
+TorchCodec's file decoder and its Windows FFmpeg-DLL discovery path.
+
+The protocol is intentionally tiny: input paths are argv, one JSON payload is
+printed with a stable marker, diagnostics go to stderr. `--preload` downloads
+and verifies the community-1 pipeline without processing user audio.
+"""
+from __future__ import annotations
+
+import importlib.metadata
+import json
+import os
+import sys
+import warnings
+import wave
+from pathlib import Path
+
+_MARKER = "VOICERIG_DIARIZATION_JSON="
+_READY_MARKER = "VOICERIG_DIARIZATION_READY="
+_MODEL_ID = "pyannote/speaker-diarization-community-1"
+
+# VoiceRig is local-first. pyannote telemetry does not contain audio, but it can
+# include model origin, file duration and speaker-count parameters. Disable it
+# unless the user explicitly opts in with PYANNOTE_METRICS_ENABLED=1.
+os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
+
+
+def _load_pipeline():
+    try:
+        # pyannote imports TorchCodec even though this worker never asks it to
+        # decode files. On Windows, a static/global FFmpeg install can therefore
+        # emit a long libtorchcodec DLL warning despite VoiceRig intentionally
+        # using Python's wave module below. Suppress import-time UserWarnings
+        # only; real import/model exceptions still fail closed.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            from pyannote.audio import Pipeline
+    except Exception as exc:
+        raise RuntimeError(f"pyannote.audio unavailable: {exc}") from exc
+
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    return Pipeline.from_pretrained(_MODEL_ID, token=token)
+
+
+def _load_canonical_wav(path: str):
+    """Read VoiceRig's mono PCM16 WAV without TorchCodec or torchaudio IO."""
+    try:
+        import torch
+    except Exception as exc:
+        raise RuntimeError(f"torch unavailable: {exc}") from exc
+
+    source = Path(path).resolve()
+    try:
+        with wave.open(str(source), "rb") as wav:
+            channels = wav.getnchannels()
+            width = wav.getsampwidth()
+            sample_rate = wav.getframerate()
+            frames = wav.getnframes()
+            raw = wav.readframes(frames)
+    except (OSError, wave.Error) as exc:
+        raise RuntimeError(f"invalid canonical WAV {source.name}: {exc}") from exc
+
+    if channels != 1 or width != 2 or sample_rate <= 0 or frames <= 0:
+        raise RuntimeError(
+            f"canonical WAV must be mono PCM16 with positive sample rate: {source.name}"
+        )
+    expected_bytes = frames * channels * width
+    if len(raw) != expected_bytes:
+        raise RuntimeError(f"canonical WAV is truncated: {source.name}")
+
+    # frombuffer avoids a Python-level sample loop; clone owns writable tensor
+    # storage after the immutable bytes object goes out of scope.
+    waveform = torch.frombuffer(raw, dtype=torch.int16).clone().to(torch.float32)
+    waveform.div_(32768.0)
+    waveform = waveform.unsqueeze(0)
+    return {
+        "waveform": waveform,
+        "sample_rate": int(sample_rate),
+        "uri": source.stem,
+    }
+
+
+def _one(pipeline, path: str) -> dict:
+    output = pipeline(_load_canonical_wav(path))
+    timeline = getattr(output, "exclusive_speaker_diarization", None)
+    if timeline is None:
+        timeline = output.speaker_diarization
+
+    segments = [
+        {"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)}
+        for turn, speaker in timeline
+    ]
+    totals: dict[str, float] = {}
+    for seg in segments:
+        totals[seg["speaker"]] = totals.get(seg["speaker"], 0.0) + max(
+            0.0, seg["end"] - seg["start"]
+        )
+
+    labels = list(output.speaker_diarization.labels())
+    raw_embeddings = getattr(output, "speaker_embeddings", None)
+    speakers = []
+    for idx, label in enumerate(labels):
+        embedding = None
+        if raw_embeddings is not None and idx < len(raw_embeddings):
+            embedding = [float(v) for v in raw_embeddings[idx]]
+        speakers.append(
+            {
+                "label": str(label),
+                "duration": totals.get(str(label), 0.0),
+                "embedding": embedding,
+            }
+        )
+    return {"source": str(Path(path).resolve()), "segments": segments, "speakers": speakers}
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args:
+        print("pyannote worker requires WAV paths or --preload", file=sys.stderr)
+        return 2
+
+    try:
+        pipeline = _load_pipeline()
+    except Exception as exc:
+        print(f"speaker model load failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+
+    if args == ["--preload"]:
+        try:
+            import torch
+            import torchaudio
+            package_version = importlib.metadata.version("pyannote.audio")
+            torchcodec_version = importlib.metadata.version("torchcodec")
+        except Exception as exc:
+            print(f"diarization runtime version unavailable: {exc}", file=sys.stderr)
+            return 3
+        print(
+            _READY_MARKER
+            + json.dumps(
+                {
+                    "ok": True,
+                    "model": _MODEL_ID,
+                    "package_version": package_version,
+                    "torch_version": str(torch.__version__),
+                    "torchaudio_version": str(torchaudio.__version__),
+                    "torchcodec_version": str(torchcodec_version),
+                    "cuda_available": bool(torch.cuda.is_available()),
+                    "audio_input": "in-memory-pcm16-wav",
+                    "telemetry": os.getenv("PYANNOTE_METRICS_ENABLED", "0"),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    if any(arg.startswith("--") for arg in args):
+        print("unknown pyannote worker option", file=sys.stderr)
+        return 2
+
+    try:
+        # Deliberately do not call .to(cuda): this worker owns the CPU-only
+        # diarization environment and leaves GPU VRAM to Chatterbox/ModelRig.
+        payload = [_one(pipeline, path) for path in args]
+    except Exception as exc:
+        print(f"speaker analysis failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 3
+
+    print(_MARKER + json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

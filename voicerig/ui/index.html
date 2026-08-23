@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VoiceRig</title>
+  <link rel="stylesheet" href="/ui/styles.css">
+  <script src="/ui/app.js" defer></script>
+  <script src="/ui/voice-options.js" defer></script>
+  <script src="/ui/reference-flow.js" defer></script>
+  <script src="/ui/danish-engine-compare.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>VoiceRig</h1>
+        <div class="muted">Lokale stemmeprofiler til ModelRig — fra lyd/video til færdig stemme.</div>
+      </div>
+      <div id="headerState" class="pill">
+        <span class="dot"></span>
+        <span>Tjekker systemet…</span>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="VoiceRig sektioner">
+      <button class="tab active" data-tab="create" type="button">Opret stemme</button>
+      <button class="tab" data-tab="library" type="button">Mine stemmer</button>
+      <button class="tab" data-tab="system" type="button">System</button>
+    </nav>
+
+    <section id="panel-create" class="panel active">
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <h2>Opret en ny stemme</h2>
+            <div class="muted tiny">1–20 lyd- eller videoklip. Du kan tilføje klip i flere omgange; de lægges til den eksisterende liste. VoiceRig laver prøveudtaler med profilens produktionsmotor, når materialet giver flere gode referenceklip, så du kan vælge den bedste før profilen bygges.</div>
+          </div>
+        </div>
+
+        <div id="readiness" class="readiness">
+          <span class="dot"></span>
+          <div><strong>Tjekker modeller og hardware…</strong></div>
+        </div>
+
+        <div id="drop" tabindex="0" role="button" aria-label="Tilføj lyd- eller videofiler">
+          <strong>Træk lyd eller video hertil</strong>
+          <span class="muted">eller klik for at tilføje flere filer</span>
+        </div>
+        <input id="picker" type="file" multiple accept="audio/*,video/*">
+        <div id="files" class="file-list"></div>
+
+        <label class="field-label" for="name">Navn på stemmen</label>
+        <input id="name" type="text" placeholder="Fx Anders" autocomplete="off" maxlength="160">
+
+        <label class="field-label" for="voiceLocale">Sprog og region</label>
+        <select id="voiceLocale" aria-describedby="voiceLocaleHelp">
+          <option value="da-DK">Dansk — Danmark</option>
+        </select>
+        <div id="voiceLocaleHelp" class="muted tiny">Dansk bruger Røst som standardmotor. Andre understøttede sprog bruger den pinnede multilingual-motor. Locale gemmes i .mrvoice; motoren får kun sit dokumenterede base-language-id.</div>
+
+        <div id="voiceAccentField" hidden>
+          <label class="field-label" for="voiceAccent">Regional accent</label>
+          <select id="voiceAccent" disabled>
+            <option value="">Fra reference / ikke angivet</option>
+          </select>
+          <div id="voiceAccentHelp" class="muted tiny"></div>
+        </div>
+
+        <button id="create" class="primary" type="button" disabled>Opret stemme</button>
+        <div id="buildStatus" class="status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="panel-library" class="panel">
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <h2>Mine stemmer</h2>
+            <div class="muted tiny">Profiler i VoiceRig og ModelRig vises samlet.</div>
+          </div>
+          <div>
+            <button id="importButton" class="secondary" type="button">Importér .mrvoice</button>
+            <input id="importPicker" type="file" accept=".mrvoice,application/octet-stream">
+          </div>
+        </div>
+
+        <div id="voiceTester" class="voice-tester" hidden>
+          <div class="voice-tester-head">
+            <div>
+              <div class="muted tiny">Test valgt profil</div>
+              <div id="testVoiceName" class="voice-name"></div>
+            </div>
+            <button id="closeVoiceTester" class="secondary" type="button">Luk</button>
+          </div>
+          <textarea id="testVoiceText" maxlength="4000" aria-label="Tekst til stemmetest">Hej. Dette er en test af stemmen i VoiceRig.</textarea>
+          <div class="voice-tester-actions">
+            <button id="synthesizeVoice" class="secondary" type="button">Afspil nuværende motor</button>
+            <button id="compareRostVoice" class="secondary" type="button">A/B: Afspil Røst v3 dansk</button>
+            <button id="compareOmniVoice" class="secondary" type="button">A/B/C: Afspil OmniVoice dansk</button>
+            <button id="compareRostReferences" class="secondary" type="button">Røst: test stemmelighed</button>
+            <span id="testVoiceStatus" class="muted tiny"></span>
+          </div>
+          <audio id="testVoiceAudio" controls hidden></audio>
+          <div id="rostComparePanel" class="status" hidden>
+            <strong>Røst v3 Chatterbox 500M</strong>
+            <div class="muted tiny">Samme reference og samme tekst som ovenfor. Første kørsel henter kun de nødvendige pinnede Røst-runtimefiler lokalt (ca. 3,2 GB). Det ændrer ikke din .mrvoice eller ModelRig-default.</div>
+            <audio id="rostCompareAudio" controls hidden></audio>
+            <div id="rostCompareStatus" class="muted tiny"></div>
+          </div>
+          <div id="rostReferencePanel" class="status" hidden>
+            <strong>Røst · stemmelighed</strong>
+            <div class="muted tiny">Samme Røst-model, samme parametre og samme tekst. Kun den gemte reference skifter under afspilning. Audition ændrer ikke profilen. Når du har en klar vinder, kan knappen “Brug … med Røst” eksplicit migrere profilen atomisk: voice-id og ModelRig-default bevares, og pakken erstattes først efter fuld validering.</div>
+            <div id="rostReferenceStatus" class="muted tiny"></div>
+            <div id="rostReferenceChoices"></div>
+          </div>
+          <div id="omnivoiceComparePanel" class="status" hidden>
+            <strong>OmniVoice</strong>
+            <div class="muted tiny">Samme reference og samme tekst. Første kørsel opretter et isoleret OmniVoice-miljø og henter de pinnede OmniVoice- og Whisper-modeller lokalt; det kan tage flere minutter og flere GB. Chatterbox-miljø, .mrvoice og ModelRig-default ændres ikke.</div>
+            <audio id="omnivoiceCompareAudio" controls hidden></audio>
+            <div id="omnivoiceCompareStatus" class="muted tiny"></div>
+          </div>
+        </div>
+
+        <div id="library" class="library-grid"></div>
+        <div id="invalidProfiles"></div>
+      </div>
+    </section>
+
+    <section id="panel-system" class="panel">
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <h2>System</h2>
+            <div class="muted tiny">Runtime, modeller, ModelRig og aktiv stemme.</div>
+          </div>
+          <div class="toolbar">
+            <a class="secondary" href="/api/diagnostics/bundle" download="voicerig-support.zip">Hent supportpakke</a>
+            <button id="refreshSystem" class="secondary" type="button">Opdatér</button>
+          </div>
+        </div>
+
+        <div id="systemGrid" class="system-grid"></div>
+        <div id="systemMessages"></div>
+
+        <div class="settings-card">
+          <strong>ModelRig authentication</strong>
+          <div id="modelrigTokenState" class="tiny muted">Tjekker om et token er konfigureret…</div>
+          <div class="settings-row">
+            <div>
+              <label class="field-label" for="modelrigToken">ModelRig device-token</label>
+              <input
+                id="modelrigToken"
+                type="password"
+                autocomplete="new-password"
+                maxlength="4096"
+                aria-describedby="modelrigTokenHelp"
+              >
+            </div>
+            <button id="saveModelrigToken" class="secondary" type="button">Gem token</button>
+            <button id="clearModelrigToken" class="danger" type="button">Ryd token</button>
+          </div>
+          <div id="modelrigTokenHelp" class="tiny muted">
+            Tokenet gemmes kun lokalt. VoiceRig returnerer aldrig tokenværdien via API, diagnostics eller supportpakken.
+          </div>
+        </div>
+
+        <div class="status">
+          <strong>Supportpakke</strong>
+          <div class="tiny muted">Indeholder kun systemmetadata og redigerede logs — aldrig kildeklip, WAV-filer, .mrvoice-profiler eller tokens.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

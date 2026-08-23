@@ -1,0 +1,326 @@
+name: tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest -q
+      - run: python -m compileall -q voicerig
+      - name: JavaScript syntax
+        run: node --check voicerig/ui/app.js
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install build
+          python -m build
+          test -n "$(find dist -maxdepth 1 -name 'voicerig-*.whl' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name 'voicerig-*.tar.gz' -print -quit)"
+      - name: Smoke-test installed wheel outside source tree
+        run: |
+          python -m venv /tmp/voicerig-wheel
+          /tmp/voicerig-wheel/bin/python -m pip install dist/voicerig-*.whl
+          /tmp/voicerig-wheel/bin/python -m pip check
+          cd /tmp
+          /tmp/voicerig-wheel/bin/python - <<'PY'
+          import importlib.metadata
+          import shutil
+          from voicerig import __version__
+          from voicerig.app.main import UI_FILE, app, health
+
+          assert importlib.metadata.version("voicerig") == __version__
+          assert app.version == __version__
+          assert health()["version"] == __version__
+          assert UI_FILE.is_file(), f"UI asset missing from wheel: {UI_FILE}"
+          html = UI_FILE.read_text(encoding="utf-8")
+          assert "VoiceRig" in html
+          assert '/ui/app.js' in html and '/ui/styles.css' in html
+          assert 'id="modelrigToken"' in html
+          assert shutil.which("voicerig", path="/tmp/voicerig-wheel/bin")
+          print("wheel metadata/assets smoke: PASS")
+          PY
+
+          export VOICERIG_DATA_DIR=/tmp/voicerig-data-smoke
+          export VOICERIG_ALLOW_LAN=0
+          /tmp/voicerig-wheel/bin/voicerig >/tmp/voicerig-service.log 2>&1 &
+          VOICERIG_PID=$!
+          trap 'kill "$VOICERIG_PID" 2>/dev/null || true' EXIT
+          /tmp/voicerig-wheel/bin/python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          base = "http://127.0.0.1:8765"
+          health = None
+          for _ in range(60):
+              try:
+                  with urllib.request.urlopen(base + "/api/health", timeout=2) as response:
+                      health = json.loads(response.read().decode("utf-8"))
+                  if health.get("ok") is True and health.get("service") == "voicerig":
+                      break
+              except Exception:
+                  time.sleep(0.25)
+          assert health and health.get("ok") is True and health.get("service") == "voicerig", "installed Linux service did not start"
+          with urllib.request.urlopen(base + "/", timeout=5) as response:
+              html = response.read().decode("utf-8")
+          assert "VoiceRig" in html and '/ui/app.js' in html and '/ui/styles.css' in html
+          with urllib.request.urlopen(base + "/ui/app.js", timeout=5) as response:
+              javascript = response.read().decode("utf-8")
+          assert "saveModelrigToken" in javascript and "/api/modelrig/config" in javascript
+          with urllib.request.urlopen(base + "/ui/styles.css", timeout=5) as response:
+              stylesheet = response.read().decode("utf-8")
+          assert ".settings-card" in stylesheet
+          with urllib.request.urlopen(base + "/api/modelrig/config", timeout=5) as response:
+              modelrig_config = json.loads(response.read().decode("utf-8"))
+          assert set(modelrig_config) == {"ok", "token_configured"}
+          assert modelrig_config["ok"] is True
+          with urllib.request.urlopen(base + "/api/diagnostics", timeout=5) as response:
+              diagnostics = json.loads(response.read().decode("utf-8"))
+          assert diagnostics.get("ok") is True
+          assert diagnostics.get("privacy", {}).get("contains_source_audio") is False
+          assert diagnostics.get("privacy", {}).get("contains_tokens") is False
+          with urllib.request.urlopen(base + "/api/diagnostics/bundle", timeout=5) as response:
+              bundle = response.read()
+          assert bundle.startswith(b"PK") and len(bundle) > 100
+          print("Linux installed-service HTTP smoke: PASS")
+          PY
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem -Path . -File -Filter *.ps1 | ForEach-Object {
+            [void][scriptblock]::Create((Get-Content -LiteralPath $_.FullName -Raw))
+            Write-Host "parsed $($_.Name)"
+          }
+
+  windows-service-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Windows PowerShell 5.1 syntax
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem -Path . -File -Filter *.ps1 | ForEach-Object {
+            $Tokens = $null
+            $Errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName,
+              [ref]$Tokens,
+              [ref]$Errors
+            )
+            if ($Errors.Count -gt 0) {
+              $Details = ($Errors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) -join "; "
+              throw "Windows PowerShell 5.1 kunne ikke parse $($_.Name): $Details"
+            }
+            Write-Host "PS5.1 parsed $($_.Name)"
+          }
+      - name: Installer retry identity and file-release smoke
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-editable-retry"
+          python -m venv $Venv
+          $Python = Join-Path $Venv "Scripts\python.exe"
+          & $Python -m pip install -e .
+          if ($LASTEXITCODE -ne 0) { throw "Editable VoiceRig-installation fejlede." }
+          $VoiceRig = Join-Path $Venv "Scripts\voicerig.exe"
+          if (-not (Test-Path -LiteralPath $VoiceRig)) { throw "Editable voicerig.exe mangler." }
+
+          # Extract the exact runtime identity/stop functions from setup-windows.ps1
+          # without executing the rest of setup. This keeps CI and the product
+          # installer on one source of truth.
+          $SetupPath = Join-Path $PWD.Path "setup-windows.ps1"
+          $SetupTokens = $null
+          $SetupErrors = $null
+          $SetupAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            $SetupPath,
+            [ref]$SetupTokens,
+            [ref]$SetupErrors
+          )
+          if ($SetupErrors.Count -gt 0) {
+            throw "setup-windows.ps1 kunne ikke parses til retry-smoke."
+          }
+          $NeededFunctions = @(
+            "Get-ProcessExecutablePath",
+            "Test-SamePath",
+            "Stop-LocalVoiceRigForRuntimeMutation"
+          )
+          $FunctionAsts = @($SetupAst.FindAll({
+            param($Node)
+            $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+              $NeededFunctions -contains $Node.Name
+          }, $true))
+          if ($FunctionAsts.Count -ne $NeededFunctions.Count) {
+            throw "Kunne ikke udtrække alle installerens runtime-stopfunktioner."
+          }
+          foreach ($Name in $NeededFunctions) {
+            $Definition = @($FunctionAsts | Where-Object { $_.Name -eq $Name })
+            if ($Definition.Count -ne 1) { throw "Runtime-funktionen '$Name' var ikke entydig." }
+            Invoke-Expression $Definition[0].Extent.Text
+          }
+
+          $env:VOICERIG_DATA_DIR = Join-Path $env:RUNNER_TEMP "voicerig-editable-data"
+          $env:VOICERIG_ALLOW_LAN = "0"
+          $Launcher = Start-Process -FilePath $VoiceRig -WorkingDirectory $PWD.Path -PassThru -WindowStyle Hidden
+          try {
+            $Health = $null
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 250
+              try {
+                $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+                if ($Health.ok -eq $true -and $Health.service -eq "voicerig") { break }
+              } catch { $Health = $null }
+            }
+            if (-not $Health -or $Health.service -ne "voicerig") { throw "Editable VoiceRig startede ikke." }
+            $ExpectedRoot = [System.IO.Path]::GetFullPath($PWD.Path).TrimEnd('\')
+            $ActualRoot = [System.IO.Path]::GetFullPath([string]$Health.source.root).TrimEnd('\')
+            if (-not [string]::Equals($ExpectedRoot, $ActualRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+              throw "Editable service rapporterede forkert source.root. Forventede '$ExpectedRoot', fik '$ActualRoot'."
+            }
+            $HealthPid = [int]$Health.pid
+
+            # Fail closed: the exact installer function must reject a different
+            # checkout root and leave the running service untouched.
+            $WrongRoot = Join-Path $env:RUNNER_TEMP "voicerig-foreign-checkout"
+            $RejectedForeign = $false
+            try {
+              Stop-LocalVoiceRigForRuntimeMutation $VoiceRig $Python $WrongRoot
+            } catch {
+              if ($_.Exception.Message -like "*ikke fra denne checkout*") {
+                $RejectedForeign = $true
+              } else {
+                throw
+              }
+            }
+            if (-not $RejectedForeign) { throw "Installeren accepterede fejlagtigt en fremmed checkout-root." }
+            $StillHealthy = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+            if ($StillHealthy.pid -ne $HealthPid) { throw "Fail-closed checket ændrede den kørende service." }
+
+            # Now call the exact installer function with the real checkout.
+            Stop-LocalVoiceRigForRuntimeMutation $VoiceRig $Python $PWD.Path
+
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              $ServerAlive = Get-Process -Id $HealthPid -ErrorAction SilentlyContinue
+              $LauncherAlive = Get-Process -Id $Launcher.Id -ErrorAction SilentlyContinue
+              if (-not $ServerAlive -and -not $LauncherAlive) { break }
+            }
+            if (Get-Process -Id $HealthPid -ErrorAction SilentlyContinue) {
+              throw "Installerens stopfunktion efterlod server-processen i live."
+            }
+            if (Get-Process -Id $Launcher.Id -ErrorAction SilentlyContinue) {
+              throw "Installerens stopfunktion efterlod voicerig.exe-launcheren i live."
+            }
+
+            # Windows proves the launcher is actually released by replacing it.
+            $Probe = "$VoiceRig.release-probe"
+            Copy-Item -LiteralPath $VoiceRig -Destination $Probe -Force
+            Move-Item -LiteralPath $Probe -Destination $VoiceRig -Force
+            Write-Host "Windows installer retry identity/file-release smoke: PASS"
+          } finally {
+            try {
+              $ServiceHealth = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 1
+              if ($ServiceHealth.pid) { Stop-Process -Id ([int]$ServiceHealth.pid) -Force -ErrorAction SilentlyContinue }
+            } catch {}
+            if ($Launcher -and -not $Launcher.HasExited) { Stop-Process -Id $Launcher.Id -Force -ErrorAction SilentlyContinue }
+          }
+      - name: Build Windows-test wheel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip install build
+          python -m build --wheel
+      - name: Install wheel in isolated Windows venv
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-wheel-win"
+          python -m venv $Venv
+          $Python = Join-Path $Venv "Scripts\python.exe"
+          $Wheel = (Get-ChildItem -Path dist -Filter "voicerig-*.whl" | Select-Object -First 1).FullName
+          if (-not $Wheel) { throw "VoiceRig wheel blev ikke bygget." }
+          & $Python -m pip install $Wheel
+          if ($LASTEXITCODE -ne 0) { throw "Windows wheel-installation fejlede." }
+          & $Python -m pip check
+          if ($LASTEXITCODE -ne 0) { throw "pip check fejlede i Windows wheel-miljøet." }
+      - name: Start installed VoiceRig and probe localhost HTTP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Venv = Join-Path $env:RUNNER_TEMP "voicerig-wheel-win"
+          $VoiceRig = Join-Path $Venv "Scripts\voicerig.exe"
+          if (-not (Test-Path -LiteralPath $VoiceRig)) { throw "voicerig.exe mangler i installeret wheel." }
+
+          $env:VOICERIG_DATA_DIR = Join-Path $env:RUNNER_TEMP "voicerig-data"
+          $env:VOICERIG_ALLOW_LAN = "0"
+          $Process = Start-Process -FilePath $VoiceRig -PassThru -WindowStyle Hidden
+          try {
+            $Health = $null
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 500
+              try {
+                $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+                if ($Health.ok -eq $true -and $Health.service -eq "voicerig") { break }
+              } catch {
+                $Health = $null
+              }
+            }
+            if (-not $Health -or $Health.ok -ne $true -or $Health.service -ne "voicerig") {
+              throw "Installeret VoiceRig-service svarede ikke korrekt på /api/health."
+            }
+            if ($Health.version -ne "0.1.0") { throw "Uventet VoiceRig-version: $($Health.version)" }
+            if ($Health.voice_build_ready -ne $false) {
+              throw "Windows hosted runner bør ikke rapportere voice-build-ready uden CUDA/model-warmup."
+            }
+
+            $Html = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -TimeoutSec 5).Content
+            if ($Html -notmatch "VoiceRig" -or $Html -notmatch "/ui/app.js" -or $Html -notmatch "/ui/styles.css") {
+              throw "Installeret UI-shell blev ikke serveret korrekt på Windows."
+            }
+            $JavaScript = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/ui/app.js" -TimeoutSec 5).Content
+            if ($JavaScript -notmatch "saveModelrigToken" -or $JavaScript -notmatch "/api/modelrig/config") {
+              throw "Installeret VoiceRig JavaScript-asset mangler ModelRig-konfigurationen."
+            }
+            $Styles = (Invoke-WebRequest -Uri "http://127.0.0.1:8765/ui/styles.css" -TimeoutSec 5).Content
+            if ($Styles -notmatch "settings-card") { throw "Installeret VoiceRig stylesheet mangler settings UI." }
+
+            $ModelRigConfig = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/modelrig/config" -TimeoutSec 5
+            if ($ModelRigConfig.ok -ne $true -or $null -eq $ModelRigConfig.token_configured) {
+              throw "Installeret ModelRig config-endpoint overholdt ikke den secret-safe kontrakt."
+            }
+            if ($ModelRigConfig.PSObject.Properties.Name -contains "token") {
+              throw "ModelRig config-endpoint må aldrig returnere tokenværdien."
+            }
+
+            $Diagnostics = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/diagnostics" -TimeoutSec 5
+            if ($Diagnostics.ok -ne $true -or $Diagnostics.privacy.contains_source_audio -ne $false -or $Diagnostics.privacy.contains_tokens -ne $false) {
+              throw "Installeret diagnostics-endpoint overholdt ikke support/privacy-kontrakten."
+            }
+            $Bundle = Join-Path $env:RUNNER_TEMP "voicerig-support.zip"
+            Invoke-WebRequest -Uri "http://127.0.0.1:8765/api/diagnostics/bundle" -OutFile $Bundle -TimeoutSec 5
+            if (-not (Test-Path $Bundle) -or (Get-Item $Bundle).Length -lt 100) {
+              throw "Installeret VoiceRig kunne ikke generere support-bundle."
+            }
+            Write-Host "Windows installed-service smoke: PASS"
+          } finally {
+            try {
+              $ServiceHealth = Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/health" -TimeoutSec 2
+              if ($ServiceHealth.pid) {
+                Stop-Process -Id ([int]$ServiceHealth.pid) -Force -ErrorAction SilentlyContinue
+              }
+            } catch {
+              if ($Process -and -not $Process.HasExited) {
+                Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+              }
+            }
+          }

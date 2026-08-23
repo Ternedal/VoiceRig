@@ -9,6 +9,7 @@ from voicerig.app.job_retention import prune_job_history
 from voicerig.app.jobs import job_manager
 from voicerig.app.pipeline import MAX_SOURCE_FILES, SUPPORTED_EXTENSIONS
 from voicerig.config import max_upload_mb
+from voicerig.languages import normalize_build_locale, validate_accent
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -29,6 +30,7 @@ def recent_jobs(limit: int = 20) -> dict:
 def start_voice_job(
     name: str = Form(...),
     language: str = Form("da"),
+    accent: str = Form(""),
     install_in_modelrig: bool = Form(True),
     files: list[UploadFile] = File(...),
 ) -> dict:
@@ -39,6 +41,11 @@ def start_voice_job(
         )
     if not name.strip():
         raise HTTPException(status_code=422, detail="Stemmen skal have et navn.")
+    try:
+        clean_language = normalize_build_locale(language)
+        clean_accent = validate_accent(clean_language, accent)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     prune_job_history()
     limit = max_upload_mb() * 1024 * 1024
@@ -62,7 +69,13 @@ def start_voice_job(
                     f.write(chunk)
             staged.append((original_name or f"klip-{idx + 1}{suffix}", target))
         try:
-            job = job_manager.create(name, language, install_in_modelrig, staged)
+            job = job_manager.create(
+                name,
+                clean_language,
+                install_in_modelrig,
+                staged,
+                accent=clean_accent,
+            )
         except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"ok": True, "job": job}

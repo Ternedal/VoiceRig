@@ -2,15 +2,19 @@ from __future__ import annotations
 
 """Standalone OmniVoice inference worker.
 
-This file is intentionally executable without importing the VoiceRig package.
-The parent VoiceRig process launches it with the isolated OmniVoice virtualenv
-so OmniVoice's Torch/Transformers dependency surface never mutates Chatterbox.
+This module is intentionally executable inside the isolated OmniVoice virtualenv
+without importing VoiceRig's runtime dependency graph. The parent launches it as
+``python -m voicerig.engines.omnivoice_worker`` from the package root so the
+third-party ``omnivoice`` distribution cannot be shadowed by VoiceRig's sibling
+``voicerig.engines.omnivoice`` module.
 """
 
 import argparse
 import importlib.metadata as metadata
+import importlib.util
 import json
 from pathlib import Path
+import sys
 
 _RESULT_MARKER = "VOICERIG_OMNIVOICE_RESULT="
 
@@ -41,6 +45,31 @@ def _installed_source_revision(expected: str) -> str:
     return actual
 
 
+def _external_import_origin() -> str:
+    """Require top-level ``omnivoice`` to resolve inside this isolated venv.
+
+    PEP 610 proves which distribution pip installed, but it does not prove what
+    Python will import when another module with the same top-level name shadows
+    it on ``sys.path``. RC21 hit exactly that failure mode when this worker was
+    executed as a file from ``voicerig/engines``. Bind the import target to the
+    isolated interpreter prefix before importing the heavyweight model package.
+    """
+    spec = importlib.util.find_spec("omnivoice")
+    origin_value = getattr(spec, "origin", None) if spec is not None else None
+    if not origin_value:
+        raise RuntimeError("OmniVoice-worker kunne ikke resolve den installerede omnivoice-pakke.")
+
+    origin = Path(str(origin_value)).resolve()
+    runtime_prefix = Path(sys.prefix).resolve()
+    try:
+        origin.relative_to(runtime_prefix)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"OmniVoice-import blev shadowed uden for den isolerede runtime: {origin}"
+        ) from exc
+    return str(origin)
+
+
 def main() -> int:
     args = _parse_args()
     request_path = Path(args.request).resolve()
@@ -54,11 +83,10 @@ def main() -> int:
     if not text:
         raise RuntimeError("OmniVoice-testteksten er tom.")
 
-    # Re-check source identity in the actual inference process. The parent
-    # runtime gate already verifies the isolated venv, but worker evidence must
-    # report what this process truly imported rather than merely echoing the
-    # requested revision from request.json.
+    # Re-check both distribution identity and Python's actual import target in
+    # the inference process. These are deliberately separate properties.
     source_revision = _installed_source_revision(str(payload["source_revision"]))
+    import_origin = _external_import_origin()
 
     import soundfile as sf
     import torch
@@ -110,6 +138,7 @@ def main() -> int:
         "model": str(payload["model_repo"]),
         "model_revision": str(payload["model_revision"]),
         "source_revision": source_revision,
+        "import_origin": import_origin,
         "sample_rate": sample_rate,
         "duration": round(frames / sample_rate, 3) if sample_rate else 0.0,
         "language": "da",

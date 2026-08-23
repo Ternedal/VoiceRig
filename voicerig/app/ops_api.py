@@ -10,6 +10,7 @@ from voicerig.app.jobs import job_manager
 from voicerig.app.pipeline import build_gate_status
 from voicerig.config import modelrig_base_url, modelrig_token, set_local_secret
 from voicerig.diagnostics import build_support_bundle, configure_logging
+from voicerig.languages import public_voice_options
 from voicerig.modelrig.client import status as modelrig_status
 from voicerig.profiles.library import list_voices
 from voicerig.runtime import voice_build_readiness
@@ -35,6 +36,7 @@ def _safe_job(job: dict) -> dict:
                 "id": voice.get("id"),
                 "name": voice.get("name"),
                 "language": voice.get("language"),
+                "accent": voice.get("accent"),
             },
             "package": result.get("package"),
             "installed_in_modelrig": result.get("installed_in_modelrig"),
@@ -50,6 +52,7 @@ def _safe_job(job: dict) -> dict:
         "message": job.get("message"),
         "name": job.get("name"),
         "language": job.get("language"),
+        "accent": job.get("accent"),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
         "error": job.get("error"),
@@ -64,6 +67,7 @@ def diagnostics_snapshot() -> dict:
             "id": item.get("id"),
             "name": item.get("name"),
             "language": item.get("language"),
+            "accent": item.get("accent"),
             "package": item.get("package"),
             "is_default": item.get("is_default"),
             "installed_in_modelrig": item.get("installed_in_modelrig"),
@@ -113,6 +117,11 @@ def ui_danish_engine_compare_js():
 @router.get("/ui/styles.css", include_in_schema=False)
 def ui_styles_css():
     return FileResponse(_UI_DIR / "styles.css", media_type="text/css")
+
+
+@router.get("/api/voice-options")
+def voice_options() -> dict:
+    return {"ok": True, **public_voice_options()}
 
 
 @router.get("/api/diagnostics")

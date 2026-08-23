@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,3 +56,32 @@ def test_worker_fails_closed_without_vcs_metadata(monkeypatch):
 
     with pytest.raises(RuntimeError, match="source-identitet"):
         worker._installed_source_revision(OMNIVOICE_SOURCE_REVISION)
+
+
+def test_worker_requires_omnivoice_import_to_resolve_inside_isolated_runtime(tmp_path: Path, monkeypatch):
+    runtime = tmp_path / "isolated-runtime"
+    origin = runtime / "Lib" / "site-packages" / "omnivoice" / "__init__.py"
+    monkeypatch.setattr(worker.sys, "prefix", str(runtime))
+    monkeypatch.setattr(
+        worker.importlib.util,
+        "find_spec",
+        lambda name: SimpleNamespace(origin=str(origin)),
+    )
+
+    actual = worker._external_import_origin()
+
+    assert Path(actual) == origin.resolve()
+
+
+def test_worker_rejects_shadowed_omnivoice_import_outside_runtime(tmp_path: Path, monkeypatch):
+    runtime = tmp_path / "isolated-runtime"
+    shadow = tmp_path / "checkout" / "voicerig" / "engines" / "omnivoice.py"
+    monkeypatch.setattr(worker.sys, "prefix", str(runtime))
+    monkeypatch.setattr(
+        worker.importlib.util,
+        "find_spec",
+        lambda name: SimpleNamespace(origin=str(shadow)),
+    )
+
+    with pytest.raises(RuntimeError, match="shadowed"):
+        worker._external_import_origin()

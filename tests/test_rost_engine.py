@@ -31,6 +31,7 @@ def test_rost_loader_uses_exact_huggingface_revision_and_minimal_runtime_files(m
             return object()
 
     fake_mtl.ChatterboxMultilingualTTS = FakeMultilingual
+    fake_chatterbox_package.mtl_tts = fake_mtl
     fake_hf = ModuleType("huggingface_hub")
 
     def snapshot_download(**kwargs):
@@ -154,3 +155,54 @@ def test_rost_synthesis_uses_danish_quality_parameters(monkeypatch, tmp_path: Pa
     assert meta["model"] == ROST_DANISH_MODEL
     assert meta["revision"] == ROST_DANISH_REVISION
     assert meta["duration"] == 2.0
+
+
+def test_rost_artifact_build_serializes_selected_reference_conditioning_and_preview(monkeypatch, tmp_path: Path):
+    captured = {}
+
+    class FakeConds:
+        def save(self, path):
+            captured["conditioning_path"] = Path(path)
+            Path(path).write_bytes(b"rost-serialized-conditioning")
+
+    class FakeWav:
+        shape = (1, 24000)
+
+    class FakeModel:
+        conds = None
+        sr = 24000
+
+        def prepare_conditionals(self, path, exaggeration):
+            captured["reference"] = path
+            captured["prepare_exaggeration"] = exaggeration
+            self.conds = FakeConds()
+
+        def generate(self, text, **kwargs):
+            captured["preview_text"] = text
+            captured["kwargs"] = kwargs
+            return FakeWav()
+
+    reference = tmp_path / "reference-3.wav"
+    conditioning = tmp_path / "conditioning.pt"
+    preview = tmp_path / "preview.wav"
+    reference.write_bytes(b"RIFF-reference-three")
+
+    fake_torchaudio = SimpleNamespace(
+        save=lambda path, wav, sample_rate, **kwargs: Path(path).write_bytes(b"RIFF-rost-preview")
+    )
+    monkeypatch.setattr(rost, "_shared_model", lambda model, revision: FakeModel())
+    monkeypatch.setitem(sys.modules, "torchaudio", fake_torchaudio)
+
+    result = rost.build_rost_danish_artifacts(reference, conditioning, preview)
+
+    assert result == (conditioning, preview)
+    assert captured["reference"] == str(reference)
+    assert captured["conditioning_path"] == conditioning
+    assert conditioning.read_bytes() == b"rost-serialized-conditioning"
+    assert preview.read_bytes() == b"RIFF-rost-preview"
+    assert captured["preview_text"] == rost.ROST_DANISH_PREVIEW_TEXT
+    assert captured["kwargs"]["language_id"] == "da"
+    assert captured["kwargs"]["cfg_weight"] == 0.5
+    assert captured["kwargs"]["repetition_penalty"] == 2.0
+    assert captured["kwargs"]["min_p"] == 0.05
+    assert captured["kwargs"]["top_p"] == 0.95

@@ -35,7 +35,7 @@ eller lydfiler.
 
 ## Manifest
 
-Et aktuelt dansk VoiceRig v1-manifest har formen:
+Et aktuelt dansk VoiceRig v1-manifest kan fx have formen:
 
 ```json
 {
@@ -43,11 +43,16 @@ Et aktuelt dansk VoiceRig v1-manifest har formen:
   "format_version": 1,
   "id": "anders-12345678",
   "name": "Anders",
-  "language": "da",
+  "language": "da-DK",
   "engine": {
     "name": "chatterbox-multilingual",
-    "model": "v3",
-    "revision": "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
+    "model": "roest-v3-chatterbox-500m",
+    "revision": "cd451fdc474aabd229fa0c6b6818f4b34382917e",
+    "options": {
+      "repetition_penalty": 2.0,
+      "min_p": 0.05,
+      "top_p": 0.95
+    }
   },
   "files": {
     "reference": "reference.wav",
@@ -56,11 +61,15 @@ Et aktuelt dansk VoiceRig v1-manifest har formen:
   },
   "defaults": {
     "exaggeration": 0.5,
-    "cfg_weight": 0.0,
+    "cfg_weight": 0.5,
     "temperature": 0.8
   }
 }
 ```
+
+Tidlige v1-profiler med base-language som `"da"` og den oprindelige
+Chatterbox V3-engine er fortsat gyldige. Locale- og engine-udvidelser må ikke
+gøre eksisterende v1-profiler ulæselige.
 
 `id` er en intern runtime-identitet og bliver bl.a. brugt som lokalt cache-
 mappenavn. V1 kræver derfor et path-sikkert slug-format:
@@ -73,6 +82,49 @@ Det betyder: lowercase bogstaver, tal, `æøå`, `_` og `-`; ingen slash,
 backslash, punktum, whitespace eller path-segmenter. Importer skal validere id'et
 **før** runtime-materialisering.
 
+### Sprog og locale
+
+`language` kan være enten et historisk base-language-id (`da`, `en`, `de`) eller
+en VoiceRig-locale (`da-DK`, `en-US`, `en-GB`, `de-DE`, osv.).
+
+Locale må **ikke** videresendes blindt som engine language-id. Runtime skal mappe
+den til motorens dokumenterede base-language:
+
+```text
+da-DK -> da
+en-US -> en
+en-GB -> en
+de-DE -> de
+pt-BR -> pt
+```
+
+Dermed kan profilen bevare region/locale uden at sende ugyldige værdier som
+`language_id="en-US"` til Chatterbox.
+
+### Valgfri accentmetadata
+
+V1 tillader det additive, valgfrie top-level-felt `accent`:
+
+```json
+{
+  "language": "en-US",
+  "accent": "southern-us"
+}
+```
+
+Fravær af `accent` er den historiske v1-kontrakt og skal fortsat accepteres.
+VoiceRig validerer accent mod den valgte locale. I den nuværende V1-kontrakt er
+amerikanske regionale accentprofiler registreret på `en-US`; de må ikke sættes
+på fx `en-GB`, `de-DE` eller `da-DK`.
+
+Accentmetadata er i V1 **reference-led**. Det er ikke et skjult Chatterbox
+language-id eller en separat model. En `en-US`-profil med `accent="new-york-city"`
+kører stadig med engine `language_id="en"`; referenceaudio skal bære den faktiske
+regionale accent. Metadataen bruges til UX/QA og gør senere dedikeret
+accent-engine-routing mulig uden nyt package-format.
+
+Se også `docs/LANGUAGE_LOCALE_ACCENT.md`.
+
 `engine.revision` identificerer den eksakte model-/kilde-revision, der producerede
 den serialiserede `conditioning.pt`. Feltet er valgfrit på formatniveau for at
 bevare læsning af tidlige v1-profiler, men nye VoiceRig-profiler skal skrive det.
@@ -80,12 +132,12 @@ Hvis feltet findes, skal det være et lowercase 40-tegns commit-id.
 
 ### Engine-specifikke options
 
-Gamle og nuværende Chatterbox V3-profiler har ingen `engine.options` og forbliver
-gyldige uændret. En kendt, pinnet engine kan dog have ekstra generation-controls,
-som ikke hører til de tre fælles `defaults`. De gemmes i så fald eksplicit under
+Gamle Chatterbox V3-profiler har ingen `engine.options` og forbliver gyldige
+uændret. En kendt, pinnet engine kan have ekstra generation-controls, som ikke
+hører til de tre fælles `defaults`. De gemmes i så fald eksplicit under
 `engine.options`, så en profils lydadfærd ikke afhænger af skjulte runtime-defaults.
 
-Eksempel på den kendte Røst v3-kandidat:
+Røst v3 bruger eksempelvis:
 
 ```json
 {
@@ -107,8 +159,9 @@ Eksempel på den kendte Røst v3-kandidat:
 }
 ```
 
-At Røst er kendt i format-/kataloglaget betyder **ikke**, at den er valgt som
-produktionsmotor. En sådan beslutning kræver separat fysisk kvalitetsacceptance.
+Fysisk RC22-RC24-evidence har gjort Røst til den foretrukne danske
+produktionsvej. Det ændrer ikke formatreglen om, at engine/model/revision skal
+være eksplicit og pinnet i den konkrete profil.
 
 Når `engine.options` findes, gælder fail-closed-regler:
 
@@ -154,6 +207,9 @@ Runtime-reglen for den aktive engine er:
    ikke kan indlæses, skal runtime regenerere conditioning fra `reference.wav`.
 4. Den regenererede conditioning kan caches lokalt, men ændrer ikke selve
    `.mrvoice`-pakken.
+5. Engine generation skal bruge det base-language-id, der er mappet fra
+   manifestets `language`/locale; locale må ikke videresendes som et ukendt
+   engine-id.
 
 Dermed kan en profil overleve en modelopgradering — og for kendte engine-skift
 kan den autoritative reference bevares — uden at binær modelstate foregiver at
@@ -179,6 +235,10 @@ formatet entydigt på tværs af TorchAudio-backends.
 Den primære reference skal være den reference, der blev brugt til at generere
 `conditioning.pt`. Alternative references er regeneration/evalueringsmateriale.
 
+Ved reference-led accentprofiler skal referenceaudio desuden være den primære
+bærer af den ønskede regionale accent; metadata alene ændrer ikke stemmens
+udtale.
+
 ## Atomisk oprettelse og erstatning
 
 Et build med samme stemmeslug kan erstatte en eksisterende `.mrvoice`. V1-
@@ -188,6 +248,9 @@ VoiceRig skriver derfor først en sibling-tempfil, validerer **hele** den nye
 pakke inklusive manifest/checksums og udfører derefter en atomisk `os.replace`.
 Hvis skrivning eller validering fejler, skal den tidligere profil forblive
 byte-for-byte urørt, og tempfilen skal ryddes op.
+
+Engine-migration skal bevare voice-id, navn, language/locale, eventuel accent og
+stored references, medmindre en eksplicit fremtidig migration beskriver andet.
 
 ## Sikkerhedsgrænser
 
@@ -217,15 +280,18 @@ Importer skal desuden afvise:
 - ukendt format/version
 - ugyldigt manifest-schema eller TTS-ranges
 - ugyldige/ukendte engine-options
+- ukendt locale/base-language
+- accent, der ikke er registreret for den valgte locale
 
 ## Kompatibilitet
 
 En v1-importer må ikke antage, at fremtidige `.mrvoice`-versioner har samme
 struktur. `format_version` skal kontrolleres før payloaden fortolkes.
 
-`engine.options` er en bagudkompatibel, valgfri manifest-udvidelse inden for v1;
-fravær betyder den oprindelige v1-kontrakt. Importer må aldrig opfinde ukendte
-engine-options eller sende dem videre uden validering.
+`engine.options` og `accent` er bagudkompatible, valgfrie manifest-udvidelser
+inden for v1. Fravær betyder den oprindelige v1-kontrakt. Importer må aldrig
+opfinde ukendte engine-options, locales eller accentkoder eller sende dem videre
+uden validering.
 
 `reference.wav` skal altid kunne bruges som regeneration-kilde for en engine,
 der eksplicit understøtter den referenceform. Backup-references kan bruges til

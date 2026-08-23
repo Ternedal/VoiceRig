@@ -8,6 +8,7 @@ voicerig-data/
 validation-output/
 validation-report.json
 piper-fallback-report.json
+engine-decision.json
 release-acceptance.json
 *.mrvoice
 *.wav

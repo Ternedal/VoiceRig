@@ -196,6 +196,12 @@ def synthesize_omnivoice_danish(reference_wav: Path, text: str, output: Path) ->
     worker = Path(__file__).with_name("omnivoice_worker.py")
     if not worker.is_file():
         raise OmniVoiceUnavailable("OmniVoice-worker mangler i VoiceRig-installationen.")
+    # Execute the worker as a package module, never as a script from the
+    # voicerig/engines directory. Script execution places that directory at
+    # sys.path[0], where our own `omnivoice.py` can shadow the third-party
+    # `omnivoice` package inside the isolated runtime. The package root works
+    # both from a source checkout and from an installed wheel/site-packages.
+    worker_package_root = Path(__file__).resolve().parents[2]
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="voicerig-omnivoice-request-") as tmp:
@@ -226,12 +232,14 @@ def synthesize_omnivoice_danish(reference_wav: Path, text: str, output: Path) ->
                 proc = subprocess.run(
                     [
                         str(python),
-                        str(worker),
+                        "-m",
+                        "voicerig.engines.omnivoice_worker",
                         "--request",
                         str(request_path),
                         "--output",
                         str(output),
                     ],
+                    cwd=str(worker_package_root),
                     capture_output=True,
                     text=True,
                     check=False,

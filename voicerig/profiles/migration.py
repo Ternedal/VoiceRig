@@ -8,15 +8,22 @@ from voicerig.engines.catalog import EngineSpec, manifest_engine
 from voicerig.profiles.package import build_package, validate_package
 
 
+def _reference_members(zf: zipfile.ZipFile) -> list[str]:
+    names = set(zf.namelist())
+    members = ["reference.wav"]
+    members.extend(
+        name
+        for name in (f"references/candidate_{idx:02d}.wav" for idx in range(1, 6))
+        if name in names
+    )
+    return members
+
+
 def migration_plan(package: Path, target_engine: EngineSpec) -> dict:
     """Return a non-mutating migration plan for a validated voice package."""
     manifest = validate_package(package)
     with zipfile.ZipFile(package, "r") as zf:
-        alternatives = sorted(
-            name
-            for name in zf.namelist()
-            if name.startswith("references/candidate_") and name.endswith(".wav")
-        )
+        members = _reference_members(zf)
     return {
         "voice_id": manifest["id"],
         "name": manifest["name"],
@@ -28,7 +35,8 @@ def migration_plan(package: Path, target_engine: EngineSpec) -> dict:
         ),
         "preserves_voice_id": True,
         "preserves_reference": True,
-        "backup_reference_count": len(alternatives),
+        "reference_count": len(members),
+        "backup_reference_count": max(0, len(members) - 1),
         "requires_new_conditioning": True,
         "requires_new_preview": True,
     }
@@ -40,31 +48,39 @@ def rebuild_package_for_engine(
     conditioning: Path,
     preview: Path,
     output: Path,
+    *,
+    reference_index: int = 0,
 ) -> Path:
-    """Repackage one voice for a target engine using its authoritative audio.
+    """Repackage one voice for a target engine using one stored reference.
 
     Engine-specific conditioning and preview must already have been generated
-    by the caller. This helper deliberately does not synthesize or download a
-    model. It validates the source, extracts only documented reference payloads
-    to a private temporary directory, preserves the logical voice id, and uses
-    build_package's validate-then-os.replace transaction for the output.
+    from the same ``reference_index`` by the caller. The selected stored
+    reference becomes authoritative ``reference.wav`` in the rebuilt package;
+    every other stored reference remains available as a backup candidate.
 
-    ``output`` may equal ``source``: all authoritative audio is materialized
-    before the atomic replacement begins.
+    ``output`` may equal ``source``. All authoritative audio is materialized in
+    a private temporary directory before build_package performs its validated
+    atomic replacement, so a failure cannot partially mutate the source.
     """
     manifest = validate_package(source)
     with tempfile.TemporaryDirectory(prefix="voicerig-engine-migration-") as tmp:
         root = Path(tmp)
-        reference = root / "reference.wav"
         alternatives: list[Path] = []
         with zipfile.ZipFile(source, "r") as zf:
-            reference.write_bytes(zf.read("reference.wav"))
-            for idx in range(1, 6):
-                name = f"references/candidate_{idx:02d}.wav"
-                if name not in zf.namelist():
-                    continue
+            members = _reference_members(zf)
+            if reference_index < 0 or reference_index >= len(members):
+                raise ValueError("Den valgte reference findes ikke længere i stemmeprofilen.")
+
+            selected_name = members[reference_index]
+            reference = root / "reference.wav"
+            reference.write_bytes(zf.read(selected_name))
+
+            for idx, member in enumerate(
+                (name for position, name in enumerate(members) if position != reference_index),
+                start=1,
+            ):
                 target = root / f"candidate_{idx:02d}.wav"
-                target.write_bytes(zf.read(name))
+                target.write_bytes(zf.read(member))
                 alternatives.append(target)
 
         return build_package(

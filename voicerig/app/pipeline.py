@@ -24,6 +24,7 @@ from voicerig.config import allow_undiarized_fallback
 from voicerig.engines.catalog import CURRENT_ENGINE, ROST_DANISH_ENGINE_SPEC, EngineSpec
 from voicerig.engines.chatterbox import ChatterboxEngine
 from voicerig.engines.rost import build_rost_danish_artifacts
+from voicerig.languages import base_language, normalize_build_locale, validate_accent
 from voicerig.media.audio import validate_wav
 from voicerig.media.ffmpeg import (
     cut_wav,
@@ -65,7 +66,7 @@ class SpeakerSelectionRequired(ValueError):
 class ReferenceSelectionRequired(ValueError):
     def __init__(self, choices: list[dict]):
         super().__init__(
-            "Vi fandt flere gode referenceklip. Lyt til de danske prøver og vælg den, der lyder mest som dig."
+            "Vi fandt flere gode referenceklip. Lyt til prøverne og vælg den, der lyder mest som stemmen."
         )
         self.choices = choices
 
@@ -194,7 +195,7 @@ def _reference_source_count(candidate: ReferenceCandidate) -> int:
 
 
 def _is_danish(language: str) -> bool:
-    return str(language or "").strip().lower().split("-", 1)[0] == "da"
+    return base_language(language) == "da"
 
 
 def _build_engine_spec(language: str) -> EngineSpec:
@@ -212,11 +213,14 @@ def _build_artifacts_for_language(
     conditioning: Path,
     preview: Path,
     language: str,
+    accent: str | None = None,
 ) -> tuple[Path, Path]:
     spec = _build_engine_spec(language)
     if spec.identity == ROST_DANISH_ENGINE_SPEC.identity:
         return build_rost_danish_artifacts(reference, conditioning, preview)
-    return ChatterboxEngine(language=language).build_artifacts(reference, conditioning, preview)
+    return ChatterboxEngine(language=language, accent=accent).build_artifacts(
+        reference, conditioning, preview
+    )
 
 
 def _reference_choices(
@@ -224,14 +228,15 @@ def _reference_choices(
     ranked: list[ReferenceCandidate],
     language: str,
     progress: ProgressCallback | None,
+    accent: str | None = None,
 ) -> list[dict]:
     """Render auditions with the same engine the final profile will use.
 
     Raw source/reference audio is never exposed through the job API. For Danish
-    profiles this is now deliberately Røst-aware: RC23 physically proved that a
+    profiles this is deliberately Røst-aware: RC23 physically proved that a
     reference selected through the old general Chatterbox audition could be
-    worse for Røst identity. The user therefore hears the actual production
-    engine before choosing the authoritative reference.
+    worse for Røst identity. For other locales, locale/accent metadata is held
+    constant while the reference candidate changes.
     """
     spec = _build_engine_spec(language)
     choices: list[dict] = []
@@ -246,7 +251,7 @@ def _reference_choices(
         reference = _materialize_reference(candidate, work / f"reference-choice-{idx:02d}.wav")
         conditioning = work / f"conditioning-choice-{idx:02d}.pt"
         preview = work / f"preview-choice-{idx:02d}.wav"
-        _build_artifacts_for_language(reference, conditioning, preview, language)
+        _build_artifacts_for_language(reference, conditioning, preview, language, accent)
         info = validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
         choices.append(
             {
@@ -254,6 +259,8 @@ def _reference_choices(
                 "label": f"Reference {idx}",
                 "engine": spec.name,
                 "engine_label": spec.label,
+                "language": language,
+                "accent": accent,
                 "quality_score": round(float(candidate.score), 4),
                 "reference_seconds": round(float(candidate.duration), 1),
                 "source_clip_count": _reference_source_count(candidate),
@@ -273,6 +280,7 @@ def _create_voice_impl(
     speaker_anchor: str | None,
     reference_choice: int | None,
     progress: ProgressCallback | None,
+    accent: str | None = None,
 ) -> BuildResult:
     _progress(progress, "starting", 1, "Forbereder voice-build…")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -322,7 +330,7 @@ def _create_voice_impl(
 
         ranked = rank_references(wavs, diarizations, limit=MAX_REFERENCE_CHOICES)
         if reference_choice is None and len(ranked) >= 2:
-            choices = _reference_choices(work, ranked, language, progress)
+            choices = _reference_choices(work, ranked, language, progress, accent)
             if len(choices) >= 2:
                 _progress(progress, "reference_selection", 65, "Venter på dit valg af den bedste prøve fra produktionsmotoren.")
                 raise ReferenceSelectionRequired(choices)
@@ -345,7 +353,7 @@ def _create_voice_impl(
         _progress(progress, "conditioning", 70, f"Bygger stemmens {spec.label}-conditioning og preview…")
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
-        _build_artifacts_for_language(reference, conditioning, preview, language)
+        _build_artifacts_for_language(reference, conditioning, preview, language, accent)
         validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
         _progress(progress, "packaging", 90, "Pakker og validerer .mrvoice…")
@@ -359,6 +367,7 @@ def _create_voice_impl(
             package,
             alternatives=alternatives,
             engine_spec=spec,
+            accent=accent,
         )
 
         saved_reference = output_dir / f"{slugify(name)}-reference.wav"
@@ -377,6 +386,7 @@ def create_voice(
     reference_choice: int | None = 1,
     progress: ProgressCallback | None = None,
     wait_for_build_slot: bool = True,
+    accent: str | None = None,
 ) -> BuildResult:
     if not name.strip():
         raise ValueError("Stemmen skal have et navn.")
@@ -388,17 +398,21 @@ def create_voice(
     if bad:
         raise ValueError(f"Ikke-understøttet filtype: {', '.join(bad)}")
 
+    clean_language = normalize_build_locale(language)
+    clean_accent = validate_accent(clean_language, accent)
+
     _acquire_build_gate(progress, wait_for_build_slot)
     try:
         return _create_voice_impl(
             name,
             sources,
             output_dir,
-            language,
+            clean_language,
             speaker_choice,
             speaker_anchor,
             reference_choice,
             progress,
+            clean_accent,
         )
     finally:
         _BUILD_GATE.release()

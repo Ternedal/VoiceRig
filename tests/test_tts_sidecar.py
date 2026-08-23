@@ -10,7 +10,7 @@ from voicerig.engines.package_runtime import resolve_package
 from voicerig.profiles.package import build_package, validate_package
 
 
-def _package(tmp_path: Path, name: str) -> Path:
+def _package(tmp_path: Path, name: str, *, engine_spec=None) -> Path:
     reference = tmp_path / f"{name}-reference.wav"
     conditioning = tmp_path / f"{name}-conditioning.pt"
     preview = tmp_path / f"{name}-preview.wav"
@@ -18,7 +18,10 @@ def _package(tmp_path: Path, name: str) -> Path:
     conditioning.write_bytes(b"conditioning")
     preview.write_bytes(b"preview")
     package = tmp_path / f"{name}.mrvoice"
-    return build_package(name, "da", reference, conditioning, preview, package)
+    kwargs = {}
+    if engine_spec is not None:
+        kwargs["engine_spec"] = engine_spec
+    return build_package(name, "da", reference, conditioning, preview, package, **kwargs)
 
 
 def test_sidecar_resolves_modelrig_default(tmp_path: Path, monkeypatch):
@@ -90,7 +93,7 @@ def test_conditioning_from_different_source_revision_is_rebuilt_from_reference(t
         conds = FakeConds()
 
         def prepare_conditionals(self, path, exaggeration=0.5):
-            calls.append(path)
+            calls.append((path, exaggeration))
             self.conds = FakeConds()
 
     package = _package(tmp_path, "portable")
@@ -111,19 +114,68 @@ def test_conditioning_from_different_source_revision_is_rebuilt_from_reference(t
     model = FakeModel()
     package_runtime._ensure_conditioning(model, package, manifest, "cuda")
 
-    assert calls == [str(reference)]
+    assert calls == [(str(reference), 0.5)]
     assert model.conds is not None
     chatterbox._set_conditioning_key(None)
 
 
-def test_known_nonproduction_engine_is_reported_as_reference_portable_not_silently_run(tmp_path: Path):
-    package = _package(tmp_path, "candidate")
+def test_pinned_rost_package_is_runtime_supported_and_dispatches_exact_model(tmp_path: Path, monkeypatch):
+    package = _package(tmp_path, "rost", engine_spec=ROST_DANISH_ENGINE_SPEC)
     manifest = validate_package(package)
-    manifest = dict(manifest)
-    manifest["engine"] = manifest_engine(ROST_DANISH_ENGINE_SPEC, include_options=True)
+    engine = package_runtime._runtime_engine(manifest)
+    assert engine == manifest_engine(ROST_DANISH_ENGINE_SPEC, include_options=True)
 
-    with pytest.raises(RuntimeError, match="reference.wav kan genbruges"):
-        package_runtime._runtime_engine(manifest)
+    loaded = []
+    generated = []
+
+    class FakeConds:
+        pass
+
+    class FakeWave:
+        shape = (1, 24000)
+
+    class FakeModel:
+        sr = 24000
+        conds = FakeConds()
+
+        def prepare_conditionals(self, path, exaggeration=0.5):
+            self.conds = FakeConds()
+
+        def generate(self, text, **kwargs):
+            generated.append((text, kwargs))
+            return FakeWave()
+
+    model = FakeModel()
+    monkeypatch.setattr(
+        package_runtime,
+        "_shared_model",
+        lambda model_name, revision: loaded.append((model_name, revision)) or model,
+    )
+    monkeypatch.setattr(package_runtime, "_ensure_conditioning", lambda *_args: None)
+    monkeypatch.setattr(package_runtime, "chatterbox_device", lambda: "cuda")
+    monkeypatch.setattr(package_runtime, "_save_pcm16", lambda _ta, path, _wav, _sr: path.write_bytes(b"RIFF"))
+
+    class FakeTA:
+        pass
+
+    import sys
+    monkeypatch.setitem(sys.modules, "torchaudio", FakeTA())
+
+    output = tmp_path / "rost-out.wav"
+    meta = package_runtime.synthesize(package, "Hej fra Røst", output)
+
+    assert loaded == [(ROST_DANISH_ENGINE_SPEC.model, ROST_DANISH_ENGINE_SPEC.revision)]
+    assert generated[0][0] == "Hej fra Røst"
+    kwargs = generated[0][1]
+    assert kwargs["language_id"] == "da"
+    assert kwargs["cfg_weight"] == 0.5
+    assert kwargs["temperature"] == 0.8
+    assert kwargs["repetition_penalty"] == 2.0
+    assert kwargs["min_p"] == 0.05
+    assert kwargs["top_p"] == 0.95
+    assert meta["model"] == ROST_DANISH_ENGINE_SPEC.model
+    assert meta["revision"] == ROST_DANISH_ENGINE_SPEC.revision
+    assert output.read_bytes() == b"RIFF"
 
 
 def test_current_engine_family_with_old_revision_remains_runtime_supported(tmp_path: Path):

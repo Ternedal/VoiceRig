@@ -70,6 +70,20 @@ def _release_device_model(device: str) -> None:
         pass
 
 
+def release_shared_model() -> None:
+    """Release the resident Chatterbox-family model before another GPU engine.
+
+    OmniVoice runs in an isolated subprocess/runtime because its dependency
+    surface differs from Chatterbox. Keep the same run->load lock ordering used
+    by normal synthesis so no concurrent request can retain or reload a
+    Chatterbox model while the external engine owns the physical GPU.
+    """
+    device = chatterbox_device()
+    with _MODEL_RUN_LOCK:
+        with _MODEL_LOAD_LOCK:
+            _release_device_model(device)
+
+
 def _load_model(model_name: str, revision: str, device: str):
     try:
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS

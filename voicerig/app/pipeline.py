@@ -21,7 +21,9 @@ from voicerig.analysis.diarization import (
 )
 from voicerig.analysis.reference import ReferenceCandidate, rank_references
 from voicerig.config import allow_undiarized_fallback
+from voicerig.engines.catalog import CURRENT_ENGINE, ROST_DANISH_ENGINE_SPEC, EngineSpec
 from voicerig.engines.chatterbox import ChatterboxEngine
+from voicerig.engines.rost import build_rost_danish_artifacts
 from voicerig.media.audio import validate_wav
 from voicerig.media.ffmpeg import (
     cut_wav,
@@ -191,20 +193,47 @@ def _reference_source_count(candidate: ReferenceCandidate) -> int:
     return 1
 
 
+def _is_danish(language: str) -> bool:
+    return str(language or "").strip().lower().split("-", 1)[0] == "da"
+
+
+def _build_engine_spec(language: str) -> EngineSpec:
+    """Return the production engine used for newly built profiles.
+
+    RC22-RC24 physical acceptance established Røst as the preferred Danish
+    engine. Keep the existing multilingual Chatterbox path for other languages
+    rather than silently extending the Danish decision beyond its evidence.
+    """
+    return ROST_DANISH_ENGINE_SPEC if _is_danish(language) else CURRENT_ENGINE
+
+
+def _build_artifacts_for_language(
+    reference: Path,
+    conditioning: Path,
+    preview: Path,
+    language: str,
+) -> tuple[Path, Path]:
+    spec = _build_engine_spec(language)
+    if spec.identity == ROST_DANISH_ENGINE_SPEC.identity:
+        return build_rost_danish_artifacts(reference, conditioning, preview)
+    return ChatterboxEngine(language=language).build_artifacts(reference, conditioning, preview)
+
+
 def _reference_choices(
     work: Path,
     ranked: list[ReferenceCandidate],
     language: str,
     progress: ProgressCallback | None,
 ) -> list[dict]:
-    """Render actual TTS auditions for each reference candidate.
+    """Render auditions with the same engine the final profile will use.
 
-    Raw source/reference audio is never exposed through the job API. The user
-    hears the same synthesized Danish preview path that the final profile uses,
-    which makes the selection about resulting voice quality rather than signal
-    level alone.
+    Raw source/reference audio is never exposed through the job API. For Danish
+    profiles this is now deliberately Røst-aware: RC23 physically proved that a
+    reference selected through the old general Chatterbox audition could be
+    worse for Røst identity. The user therefore hears the actual production
+    engine before choosing the authoritative reference.
     """
-    engine = ChatterboxEngine(language=language)
+    spec = _build_engine_spec(language)
     choices: list[dict] = []
     total = min(MAX_REFERENCE_CHOICES, len(ranked))
     for idx, candidate in enumerate(ranked[:MAX_REFERENCE_CHOICES], start=1):
@@ -212,17 +241,19 @@ def _reference_choices(
             progress,
             "reference_audition",
             55 + int(((idx - 1) / max(1, total)) * 10),
-            f"Laver dansk prøve {idx} af {total}…",
+            f"Laver {spec.label}-prøve {idx} af {total}…",
         )
         reference = _materialize_reference(candidate, work / f"reference-choice-{idx:02d}.wav")
         conditioning = work / f"conditioning-choice-{idx:02d}.pt"
         preview = work / f"preview-choice-{idx:02d}.wav"
-        engine.build_artifacts(reference, conditioning, preview)
+        _build_artifacts_for_language(reference, conditioning, preview, language)
         info = validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
         choices.append(
             {
                 "choice": idx,
                 "label": f"Reference {idx}",
+                "engine": spec.name,
+                "engine_label": spec.label,
                 "quality_score": round(float(candidate.score), 4),
                 "reference_seconds": round(float(candidate.duration), 1),
                 "source_clip_count": _reference_source_count(candidate),
@@ -293,7 +324,7 @@ def _create_voice_impl(
         if reference_choice is None and len(ranked) >= 2:
             choices = _reference_choices(work, ranked, language, progress)
             if len(choices) >= 2:
-                _progress(progress, "reference_selection", 65, "Venter på dit valg af den bedste danske prøve.")
+                _progress(progress, "reference_selection", 65, "Venter på dit valg af den bedste prøve fra produktionsmotoren.")
                 raise ReferenceSelectionRequired(choices)
 
         if reference_choice is None:
@@ -310,20 +341,29 @@ def _create_voice_impl(
             target = work / f"reference-alt-{idx:02d}.wav"
             alternatives.append(_materialize_reference(candidate, target))
 
-        _progress(progress, "conditioning", 70, "Bygger stemmens Chatterbox-conditioning og preview…")
-        engine = ChatterboxEngine(language=language)
+        spec = _build_engine_spec(language)
+        _progress(progress, "conditioning", 70, f"Bygger stemmens {spec.label}-conditioning og preview…")
         conditioning = work / "conditioning.pt"
         preview = work / "preview.wav"
-        engine.build_artifacts(reference, conditioning, preview)
+        _build_artifacts_for_language(reference, conditioning, preview, language)
         validate_wav(preview, min_duration_s=0.5, max_duration_s=90.0, require_audible=True)
 
         _progress(progress, "packaging", 90, "Pakker og validerer .mrvoice…")
         package = output_dir / f"{slugify(name)}.mrvoice"
-        build_package(name, language, reference, conditioning, preview, package, alternatives=alternatives)
+        build_package(
+            name,
+            language,
+            reference,
+            conditioning,
+            preview,
+            package,
+            alternatives=alternatives,
+            engine_spec=spec,
+        )
 
         saved_reference = output_dir / f"{slugify(name)}-reference.wav"
         shutil.copy2(reference, saved_reference)
-        _progress(progress, "complete", 100, "Stemmen er bygget og valideret.")
+        _progress(progress, "complete", 100, f"Stemmen er bygget og valideret med {spec.label}.")
         return BuildResult(package=package, reference=saved_reference, diarization_used=used)
 
 

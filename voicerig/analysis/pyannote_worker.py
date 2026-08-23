@@ -20,6 +20,7 @@ import importlib.metadata
 import json
 import os
 import sys
+import warnings
 import wave
 from pathlib import Path
 
@@ -35,7 +36,14 @@ os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "0")
 
 def _load_pipeline():
     try:
-        from pyannote.audio import Pipeline
+        # pyannote imports TorchCodec even though this worker never asks it to
+        # decode files. On Windows, a static/global FFmpeg install can therefore
+        # emit a long libtorchcodec DLL warning despite VoiceRig intentionally
+        # using Python's wave module below. Suppress import-time UserWarnings
+        # only; real import/model exceptions still fail closed.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            from pyannote.audio import Pipeline
     except Exception as exc:
         raise RuntimeError(f"pyannote.audio unavailable: {exc}") from exc
 
@@ -128,10 +136,9 @@ def main() -> int:
 
     if args == ["--preload"]:
         try:
-            import pyannote.audio
             import torch
             import torchaudio
-            package_version = str(pyannote.audio.__version__)
+            package_version = importlib.metadata.version("pyannote.audio")
             torchcodec_version = importlib.metadata.version("torchcodec")
         except Exception as exc:
             print(f"diarization runtime version unavailable: {exc}", file=sys.stderr)

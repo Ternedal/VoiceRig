@@ -14,13 +14,14 @@ jobs:
       - name: JavaScript syntax
         run: |
           node --check voicerig/ui/app.js
+          node --check voicerig/ui/voice-options.js
           node --check voicerig/ui/reference-flow.js
           node --check voicerig/ui/danish-engine-compare.js
       - name: Build wheel
         run: |
           python -m pip install build
           python -m build --wheel
-      - name: Prove Danish A/B/C assets are packaged
+      - name: Prove voice engine and locale assets are packaged
         run: |
           python - <<'PY'
           import zipfile
@@ -32,21 +33,35 @@ jobs:
               required = {
                   "voicerig/ui/index.html",
                   "voicerig/ui/app.js",
+                  "voicerig/ui/voice-options.js",
                   "voicerig/ui/reference-flow.js",
                   "voicerig/ui/danish-engine-compare.js",
+                  "voicerig/languages.py",
                   "voicerig/engines/rost.py",
                   "voicerig/engines/omnivoice.py",
                   "voicerig/engines/omnivoice_worker.py",
               }
               missing = sorted(required - names)
-              assert not missing, f"wheel missing Danish comparison assets: {missing}"
+              assert not missing, f"wheel missing voice runtime/UI assets: {missing}"
               html = zf.read("voicerig/ui/index.html").decode("utf-8")
               compare_js = zf.read("voicerig/ui/danish-engine-compare.js").decode("utf-8")
+              options_js = zf.read("voicerig/ui/voice-options.js").decode("utf-8")
+              languages_py = zf.read("voicerig/languages.py").decode("utf-8")
               assert '/ui/danish-engine-compare.js' in html
+              assert '/ui/voice-options.js' in html
+              assert 'voiceLocale' in html
+              assert 'voiceAccent' in html
               assert 'compareRostVoice' in html
               assert 'compareOmniVoice' in html
               assert '/api/tts/compare/rost' in compare_js
               assert '/api/tts/compare/omnivoice' in compare_js
               assert 'voice_package: voice.package' in compare_js
-          print("Danish engine packaged A/B/C contract: PASS")
+              assert '/api/voice-options' in options_js
+              assert "form.append('language', localeSelect.value" in options_js
+              assert "form.append('accent', accentSelect.value)" in options_js
+              assert 'general-american' in languages_py
+              assert 'southern-us' in languages_py
+              assert 'new-york-city' in languages_py
+              assert 'engine_language_id' in languages_py
+          print("Voice engine + locale/accent packaged contract: PASS")
           PY

@@ -105,7 +105,9 @@ def test_omnivoice_runtime_verifier_requires_exact_pep610_git_commit():
     assert OMNIVOICE_PACKAGE_VERSION in code
 
 
-def test_omnivoice_runtime_repairs_a_wrong_or_unverified_source(tmp_path: Path, monkeypatch):
+def test_omnivoice_runtime_repairs_a_wrong_or_unverified_source_without_forcing_dependencies(
+    tmp_path: Path, monkeypatch
+):
     root = tmp_path / "omnivoice-runtime"
     python = root / "bin" / "python"
     python.parent.mkdir(parents=True)
@@ -120,12 +122,16 @@ def test_omnivoice_runtime_repairs_a_wrong_or_unverified_source(tmp_path: Path, 
 
     assert omnivoice.ensure_runtime() == python
 
-    vcs_commands = [command for command in commands if any("git+https://github.com/k2-fsa/OmniVoice.git@" in item for item in command)]
-    assert len(vcs_commands) == 1
-    vcs_command = vcs_commands[0]
-    assert "--force-reinstall" in vcs_command
-    assert "--upgrade" in vcs_command
-    assert f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}" in vcs_command
+    requirement = f"git+https://github.com/k2-fsa/OmniVoice.git@{OMNIVOICE_SOURCE_REVISION}"
+    vcs_commands = [command for command in commands if requirement in command]
+    assert len(vcs_commands) == 2
+
+    dependency_command, source_repair_command = vcs_commands
+    assert "--force-reinstall" not in dependency_command
+    assert "--no-deps" not in dependency_command
+    assert "--force-reinstall" in source_repair_command
+    assert "--no-deps" in source_repair_command
+    assert "--upgrade" not in source_repair_command
 
 
 def test_omnivoice_contract_uses_immutable_source_model_and_asr_revisions():

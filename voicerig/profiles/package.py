@@ -17,6 +17,7 @@ from voicerig.engines.catalog import (
     manifest_engine,
     validate_engine_options,
 )
+from voicerig.languages import validate_accent
 
 FORMAT = "modelrig-voice"
 FORMAT_VERSION = 1
@@ -30,6 +31,7 @@ _MAX_CONDITIONING_BYTES = 64 * 1024 * 1024
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _LANGUAGE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$")
+_ACCENT = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _VOICE_ID = re.compile(r"^[a-z0-9æøå_-]{1,160}$")
 _REFERENCE_PAYLOAD = re.compile(r"^references/candidate_0[1-5]\.wav$")
 
@@ -44,6 +46,7 @@ class Manifest:
     engine: dict
     files: dict
     defaults: dict
+    accent: str | None = None
 
 
 def slugify(value: str) -> str:
@@ -71,9 +74,11 @@ def build_package(
     alternatives: list[Path] | None = None,
     engine_spec: EngineSpec | None = None,
     voice_id: str | None = None,
+    accent: str | None = None,
 ) -> Path:
     alternatives = alternatives or []
     spec = engine_spec or CURRENT_ENGINE
+    clean_accent = validate_accent(language, accent)
     resolved_voice_id = (
         f"{slugify(name)}-{uuid.uuid4().hex[:8]}" if voice_id is None else str(voice_id)
     )
@@ -95,7 +100,15 @@ def build_package(
             "preview": "preview.wav",
         },
         defaults=defaults_for_engine(spec, language),
+        accent=clean_accent,
     )
+    manifest_payload = asdict(manifest)
+    # Accent is an additive v1 metadata field. Omit it entirely for legacy/base
+    # profiles so byte-level consumers that never knew about accents keep the
+    # historical manifest shape.
+    if clean_accent is None:
+        manifest_payload.pop("accent", None)
+
     files: list[tuple[Path, str]] = [
         (reference, "reference.wav"),
         (conditioning, "conditioning.pt"),
@@ -112,7 +125,7 @@ def build_package(
         with zipfile.ZipFile(temp, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(
                 "manifest.json",
-                json.dumps(asdict(manifest), ensure_ascii=False, indent=2),
+                json.dumps(manifest_payload, ensure_ascii=False, indent=2),
             )
             zf.writestr("checksums.json", json.dumps(checksums, indent=2))
             for src, arc in files:
@@ -198,6 +211,13 @@ def _validate_manifest(manifest) -> dict:
     language = _nonempty_string(manifest.get("language"), "language", 16)
     if not _LANGUAGE.fullmatch(language):
         raise ValueError("Manifestets language er ugyldigt.")
+
+    accent = manifest.get("accent")
+    if accent is not None:
+        accent = _nonempty_string(accent, "accent", 64).lower()
+        if not _ACCENT.fullmatch(accent):
+            raise ValueError("Manifestets accent er ugyldig.")
+        validate_accent(language, accent)
 
     engine = manifest.get("engine")
     if not isinstance(engine, dict):

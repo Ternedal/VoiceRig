@@ -20,7 +20,7 @@ jobs:
         run: |
           python -m pip install build
           python -m build --wheel
-      - name: Prove Røst A/B assets are packaged
+      - name: Prove Danish A/B/C assets are packaged
         run: |
           python - <<'PY'
           import zipfile
@@ -35,13 +35,18 @@ jobs:
                   "voicerig/ui/reference-flow.js",
                   "voicerig/ui/danish-engine-compare.js",
                   "voicerig/engines/rost.py",
+                  "voicerig/engines/omnivoice.py",
+                  "voicerig/engines/omnivoice_worker.py",
               }
               missing = sorted(required - names)
               assert not missing, f"wheel missing Danish comparison assets: {missing}"
               html = zf.read("voicerig/ui/index.html").decode("utf-8")
               compare_js = zf.read("voicerig/ui/danish-engine-compare.js").decode("utf-8")
               assert '/ui/danish-engine-compare.js' in html
+              assert 'compareRostVoice' in html
+              assert 'compareOmniVoice' in html
               assert '/api/tts/compare/rost' in compare_js
+              assert '/api/tts/compare/omnivoice' in compare_js
               assert 'voice_package: voice.package' in compare_js
-          print("Danish engine packaged contract: PASS")
+          print("Danish engine packaged A/B/C contract: PASS")
           PY

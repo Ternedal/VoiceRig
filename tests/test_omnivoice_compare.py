@@ -47,7 +47,7 @@ def _client(monkeypatch) -> TestClient:
     return TestClient(app_main.app)
 
 
-def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
+def test_omnivoice_worker_runs_as_module_after_chatterbox_release_and_strips_hf_token(
     tmp_path: Path, monkeypatch
 ):
     reference = tmp_path / "reference.wav"
@@ -57,6 +57,8 @@ def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
     fake_python.write_bytes(b"")
     events: list[str] = []
     captured_env = {}
+    captured_command: list[str] = []
+    captured_cwd = None
 
     monkeypatch.setattr(omnivoice, "ensure_runtime", lambda: fake_python)
     monkeypatch.setattr(omnivoice, "release_shared_model", lambda: events.append("release"))
@@ -64,7 +66,10 @@ def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
     monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "must-not-leak-either")
 
     def fake_run(command, **kwargs):
+        nonlocal captured_cwd
         events.append("worker")
+        captured_command[:] = command
+        captured_cwd = kwargs.get("cwd")
         captured_env.update(kwargs["env"])
         out = Path(command[command.index("--output") + 1])
         _wav(out, frames=4800)
@@ -87,6 +92,10 @@ def test_omnivoice_worker_runs_after_chatterbox_release_and_strips_hf_token(
     result = omnivoice.synthesize_omnivoice_danish(reference, "Hej verden", output)
 
     assert events == ["release", "worker"]
+    assert captured_command[0] == str(fake_python)
+    assert captured_command[1:3] == ["-m", "voicerig.engines.omnivoice_worker"]
+    assert str(Path(omnivoice.__file__).with_name("omnivoice_worker.py")) not in captured_command
+    assert captured_cwd == str(Path(omnivoice.__file__).resolve().parents[2])
     assert "HF_TOKEN" not in captured_env
     assert "HUGGING_FACE_HUB_TOKEN" not in captured_env
     assert captured_env["HF_HUB_DISABLE_TELEMETRY"] == "1"

@@ -11,13 +11,21 @@
     return options.find((item) => item.code === localeSelect.value) || null;
   }
 
-  function renderAccent() {
+  function accentLabel(localeCode, accentCode) {
+    if (!accentCode) return '';
+    const locale = options.find((item) => item.code === localeCode);
+    const accent = (locale?.accents || []).find((item) => item.code === accentCode);
+    return accent?.label || accentCode;
+  }
+
+  function renderAccent(preferred = null) {
     const locale = selectedLocale();
     const accents = Array.isArray(locale?.accents) ? locale.accents : [];
     accentSelect.replaceChildren();
     if (!accents.length) {
       accentField.hidden = true;
       accentSelect.disabled = true;
+      accentHelp.textContent = '';
       return;
     }
 
@@ -33,7 +41,17 @@
       option.textContent = accent.label;
       accentSelect.appendChild(option);
     }
-    accentHelp.textContent = 'Accentprofilen er reference-led metadata. Den aktive Chatterbox-motor bruger fortsat language_id=en; referenceklippet bærer den faktiske regionale accent.';
+    if (preferred && accents.some((item) => item.code === preferred)) {
+      accentSelect.value = preferred;
+    }
+    accentHelp.textContent = 'Accentprofilen er reference-led metadata. Chatterbox bruger fortsat language_id=en; den faktiske regionale accent skal være til stede i referenceklippet. VoiceRig gemmer profilen, så en dedikeret regional motor senere kan routes uden formatbrud.';
+  }
+
+  function syncJobVoiceOptions(job) {
+    if (!job || !options.length) return;
+    const locale = options.find((item) => item.code === job.language);
+    if (locale) localeSelect.value = locale.code;
+    renderAccent(job.accent || null);
   }
 
   async function loadOptions() {
@@ -44,15 +62,19 @@
         throw new Error(detail(data.detail || 'Ingen sprogvarianter returneret.'));
       }
       options = data.locales;
+      const desiredLocale = state.currentJob?.language || data.default_locale;
       localeSelect.replaceChildren();
       for (const locale of options) {
         const option = document.createElement('option');
         option.value = locale.code;
         option.textContent = locale.label;
-        if (locale.code === data.default_locale) option.selected = true;
+        if (locale.code === desiredLocale) option.selected = true;
         localeSelect.appendChild(option);
       }
-      renderAccent();
+      if (!options.some((item) => item.code === localeSelect.value)) {
+        localeSelect.value = data.default_locale;
+      }
+      renderAccent(state.currentJob?.accent || null);
     } catch (error) {
       options = [{ code: 'da-DK', label: 'Dansk — Danmark', accents: [] }];
       localeSelect.replaceChildren();
@@ -61,11 +83,12 @@
       option.textContent = 'Dansk — Danmark';
       localeSelect.appendChild(option);
       accentField.hidden = true;
+      accentSelect.disabled = true;
       toastMsg(`Sproglisten kunne ikke indlæses; bruger dansk som fallback: ${error.message}`, true);
     }
   }
 
-  localeSelect.onchange = renderAccent;
+  localeSelect.onchange = () => renderAccent();
 
   async function submitBuildWithVoiceOptions() {
     state.building = true;
@@ -92,10 +115,46 @@
   }
 
   // app.js binds the original submitBuild function directly to onclick. Rebind
-  // after this deferred script loads so locale/accent values are sent with the
-  // exact same persistent-job flow rather than creating a second code path.
+  // after this deferred script loads so locale/accent values are sent through
+  // the exact same persistent-job flow rather than creating a second job path.
   submitBuild = submitBuildWithVoiceOptions;
   createButton.onclick = submitBuildWithVoiceOptions;
+
+  const baseWatchJob = watchJob;
+  watchJob = function watchJobWithVoiceOptions(job) {
+    syncJobVoiceOptions(job);
+    baseWatchJob(job);
+  };
+
+  const baseRenderLibrary = renderLibrary;
+  renderLibrary = function renderLibraryWithAccentBadges() {
+    baseRenderLibrary();
+    const voices = state.library?.voices || [];
+    const cards = [...document.querySelectorAll('.voice-card')];
+    voices.forEach((voice, index) => {
+      if (!voice.accent || !cards[index]) return;
+      const badges = cards[index].querySelector('.badges');
+      if (badges) badges.appendChild(badge(accentLabel(voice.language, voice.accent), 'accent'));
+    });
+  };
+
+  const baseOpenVoiceTest = openVoiceTest;
+  openVoiceTest = function openVoiceTestForLocale(voice) {
+    baseOpenVoiceTest(voice);
+    const isDanish = String(voice?.language || '').toLowerCase().split('-', 1)[0] === 'da';
+    for (const id of ['compareRostVoice', 'compareOmniVoice', 'compareRostReferences']) {
+      const button = document.querySelector(`#${id}`);
+      if (button) button.hidden = !isDanish;
+    }
+    if (!isDanish) {
+      for (const id of ['rostComparePanel', 'omnivoiceComparePanel', 'rostReferencePanel']) {
+        const panel = document.querySelector(`#${id}`);
+        if (panel) panel.hidden = true;
+      }
+    }
+    const accent = voice?.accent ? ` · ${accentLabel(voice.language, voice.accent)}` : '';
+    testVoiceStatus.textContent = `Tester ${voice.package} · ${voice.language || 'ukendt locale'}${accent} uden at ændre ModelRig-default.`;
+  };
 
   loadOptions();
 })();

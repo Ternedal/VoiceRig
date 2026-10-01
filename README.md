@@ -1,8 +1,34 @@
 # VoiceRig
 
+_Documentation baseline: 2026-10-01 · V1 product path implemented; final release remains evidence-driven._
+
 VoiceRig er et lokalt Windows-system til at lave portable ModelRig-stemmeprofiler ud fra almindelige lyd- og videoklip.
 
 **Produktflowet er bevidst enkelt:** vælg 1–10 klip → giv stemmen et navn → VoiceRig finder den rigtige speaker, bygger stemmen og installerer en `.mrvoice` direkte i ModelRig.
+
+## System position
+
+```mermaid
+flowchart LR
+    SRC["Audio / video sources"]
+    DIAR["VoiceRig speaker isolation\npyannote CPU"]
+    TTS["VoiceRig voice build / TTS\nChatterbox CUDA"]
+    PKG[".mrvoice\nportable voice authority"]
+    SIDE["VoiceRig sidecar :8765\nloopback-only"]
+    MR["ModelRig provider facade\nauto: VoiceRig → Piper fallback"]
+    K["Kaliv clients\nthrough authenticated ModelRig backend"]
+    REL["Physical acceptance\nreal clips · listening QA · VRAM · fallback\nexact checkout SHA/root"]
+
+    SRC --> DIAR --> TTS --> PKG --> SIDE --> MR --> K
+    PKG --> REL
+    SIDE --> REL
+    MR --> REL
+```
+
+VoiceRig owns voice-package creation and voice/TTS runtime authority. ModelRig
+owns user-facing orchestration and authenticated client access. A software-green
+VoiceRig checkout is not a release verdict until the physical acceptance chain
+has passed on the exact candidate revision.
 
 ## VoiceRig V1
 
@@ -212,4 +238,16 @@ Den aktuelle grønne PR-head og CI-runs registreres i PR #1/issue #3, ikke som e
 
 ## Release-status
 
-PR #1 forbliver **draft**, indtil den færdige V1-head har bestået fysisk acceptance på RTX 3060 12 GB med rigtige klip, manuel stemmelighed/lydkvalitet, server-processens peak VRAM, ModelRig-provider og Piper fallback.
+Release status is **evidence-driven**, not tied to a permanent PR number.
+The candidate is releasable only when the exact clean VoiceRig revision has:
+
+- green repository CI;
+- successful Windows product installation/model warmup;
+- physical build + synthesis from real clips;
+- manual Danish voice-likeness/quality PASS;
+- measured server-process VRAM within the target 12 GB class;
+- ModelRig provider integration PASS;
+- Piper fallback and restore PASS;
+- a final content-bound `release-acceptance.json` verdict.
+
+Any source change after physical acceptance makes that evidence stale.

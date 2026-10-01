@@ -1,48 +1,27 @@
 # Architecture
 
-```text
-Audio / Video
-    |
-    v
-FFmpeg decode -> canonical mono PCM16 WAV @ 24 kHz
-    |
-    v
-.venv-diarization / pyannote 4.0.7 (CPU subprocess)
-    |   - WAV decoded by Python stdlib
-    |   - in-memory waveform dict -> pyannote
-    |   - no TorchCodec file-decoder on critical path
-    |
-    v
-Cross-file speaker clustering
-    |
-    +-> clear dominant speaker -> automatic
-    |
-    +-> ambiguous -> playable speaker samples -> one user choice
-    |
-    v
-Reference ranking / stitching
-    |
-    v
-.venv / Chatterbox Multilingual V3 (CUDA)
-    |                |
-    |                +-> preview.wav (PCM16)
-    +-> conditioning.pt
-    |
-    v
-.mrvoice package
-    |
-    +-> primary + backup references
-    +-> revision-aware conditioning
-    +-> ~/.kaliv/voices/ (atomic same-host install)
-    |
-    v
-VoiceRig loopback sidecar :8765
-    |
-    v
-ModelRig worker provider facade
-    |
-    v
-ModelRig authenticated backend :8080
+_Last reviewed against `main` on 2026-10-01._
+
+```mermaid
+flowchart TB
+    SRC["Audio / video"]
+    FF["FFmpeg decode\nmono PCM16 WAV @ 24 kHz"]
+    PY["pyannote 4.0.7\nCPU-only diarization"]
+    SPK{"Speaker decision"}
+    AUTO["Clear dominant speaker\nautomatic"]
+    PICK["Ambiguous speakers\nplayable samples + one user choice"]
+    REF["Reference ranking / stitching"]
+    CB["Chatterbox Multilingual V3\nCUDA"]
+    PKG[".mrvoice\nreference + conditioning + preview\nchecksums + engine revision"]
+    LIB["~/.kaliv/voices/\natomic same-host install"]
+    SIDE["VoiceRig sidecar :8765\nloopback-only"]
+    PROV["ModelRig TTS provider facade\nVoiceRig preferred · Piper fallback"]
+    API["ModelRig backend :8080\nauthenticated Kaliv surface"]
+
+    SRC --> FF --> PY --> SPK
+    SPK --> AUTO --> REF
+    SPK --> PICK --> REF
+    REF --> CB --> PKG --> LIB --> SIDE --> PROV --> API
 ```
 
 Normal-UI'et eksponerer med vilje ingen model-, sample-rate-, embedding- eller
@@ -177,3 +156,30 @@ Authorization: Bearer <MODELRIG_TOKEN>
 
 og kræver, at `checks.tts.provider == "voicerig"` samt at aktiv package matcher
 den profil, acceptance netop byggede.
+
+
+## Release authority
+
+```mermaid
+flowchart LR
+    SHA["exact clean VoiceRig SHA + checkout root"]
+    CI["exact-SHA CI"]
+    REAL["real source clips"]
+    E2E["VoiceRig HTTP E2E\npackage + CUDA TTS + peak VRAM"]
+    QA["manual listening QA\nDanish + speaker likeness"]
+    MR["ModelRig provider check"]
+    FB["Piper fallback + VoiceRig restore"]
+    ACCEPT["release-acceptance.json\ncontent-bound PASS"]
+
+    SHA --> CI
+    SHA --> E2E
+    REAL --> E2E --> QA
+    E2E --> MR --> FB
+    CI --> ACCEPT
+    QA --> ACCEPT
+    FB --> ACCEPT
+```
+
+No individual diagram or CI result grants release by itself. The final acceptance
+must bind the same clean source revision/root and the exact artifacts reviewed
+physically.

@@ -6,8 +6,8 @@ Denne gate køres **kun efter** den fulde fysiske rig-acceptance i
 Målet er ét samlet, fail-closed releasebevis uden at uploade stemmeoptagelser,
 `.mrvoice` eller WAV-filer til GitHub.
 
-Den konkrete immutable release-ref, commit og grønne CI-runs dokumenteres i den
-aktuelle autoritative acceptance-issue og PR #1. Der hardcodes derfor ikke live
+Den konkrete immutable release-ref, commit og grønne CI-runs skal bindes til den
+aktuelle release-candidates lokale og CI-baserede evidence; dokumentationen hardcoder ikke et levende PR-/issue-nummer. Der hardcodes derfor ikke live
 SHA eller run-numre i denne fil. Hvis den pinned VoiceRig-commit ændres, er
 tidligere fysisk acceptance stale og skal køres igen.
 
@@ -148,7 +148,7 @@ Et grønt unit- eller editable-checkout alene er derfor ikke nok til release.
 
 ## 5. Merge-regel
 
-PR #1 kan først gøres ready/merge, når:
+the V1 release candidate kan først gøres ready/merge, når:
 
 1. `release-acceptance.json` siger `ok: true`,
 2. final `source.revision` og `source.root` matcher den pinned release-kandidat,

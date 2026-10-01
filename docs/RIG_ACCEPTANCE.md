@@ -1,6 +1,6 @@
 # VoiceRig fysisk acceptance — RTX 3060 12 GB
 
-Denne runbook er den sidste gate før VoiceRig V1 PR #1 må gøres ready/merge.
+Denne runbook er den sidste gate før VoiceRig V1 the V1 release candidate må gøres ready/merge.
 Den skal køres på den faktiske Windows-rig med NVIDIA RTX 3060 12 GB og et eller
 flere rigtige lyd-/videoklip med den stemme, der skal clones.
 
@@ -25,7 +25,7 @@ anden CUDA-model i validatorprocessen.
 
 ## 1. Hent den eksakte kandidat
 
-Den autoritative immutable release-ref og dens eksakte SHA står i issue #3.
+Den autoritative immutable release-ref og dens eksakte SHA står i the current release-candidate evidence record.
 Checkout altid den ref, ikke en bevægelig udviklingsbranch:
 
 ```powershell
@@ -263,7 +263,7 @@ metadata, hashes og verdicts.
 
 ## Definition of Done
 
-PR #1 må først gøres ready og merges, når:
+the V1 release candidate må først gøres ready og merges, når:
 
 1. alle autoritative GitHub Actions-workflows er grønne på samme pinned VoiceRig commit,
 2. fysisk checkout er clean og matcher pinned release-ref,

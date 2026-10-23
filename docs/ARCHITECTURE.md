@@ -183,3 +183,13 @@ flowchart LR
 No individual diagram or CI result grants release by itself. The final acceptance
 must bind the same clean source revision/root and the exact artifacts reviewed
 physically.
+
+
+## Kaliv ecosystem documentation note (2026-10-23)
+
+The architecture and contracts above were originally reviewed on **2026-10-01**. The following additions are documentation-level integration guidance only, not a claim that the underlying implementation has been re-audited on 2026-10-23.
+
+- The canonical [ecosystem responsibility map](KALIV_ECOSYSTEM.md) explains cross-repository boundaries.
+- The [integration acceptance checklist](INTEGRATION_ACCEPTANCE_2026-10-23.md) records exact-revision, negative-path and hardware evidence still needed.
+- [KalivNexus](https://github.com/Ternedal/KalivNexus) is proposed as a governed external-capability broker. It is **not** a substitute for VoiceRig's domain authority and must not be described as a currently validated runtime dependency.
+- Keep automated tests, physical acceptance and release approval distinct. Never promote a status solely because a documentation PR merges.

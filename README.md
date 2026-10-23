@@ -251,3 +251,11 @@ The candidate is releasable only when the exact clean VoiceRig revision has:
 - a final content-bound `release-acceptance.json` verdict.
 
 Any source change after physical acceptance makes that evidence stale.
+
+
+## Cross-repository documentation (2026-10-23)
+
+- [Kaliv ecosystem and KalivNexus ownership map](docs/KALIV_ECOSYSTEM.md)
+- [Subsystem integration acceptance checklist](docs/INTEGRATION_ACCEPTANCE_2026-10-23.md)
+
+These documents distinguish proposed integrations from implemented, tested and released functionality. They do not supersede this repository's operational instructions or evidence gates.

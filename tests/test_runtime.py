@@ -84,3 +84,25 @@ def test_model_readiness_marker_must_match_current_contract(tmp_path, monkeypatc
     stale = runtime.model_warmup_status()
     assert stale["verified"] is False
     assert "matcher ikke" in stale["detail"]
+
+
+def test_hardware_status_probes_once_per_second(monkeypatch):
+    probes = []
+    clock = [100.0]
+    monkeypatch.setattr(runtime, "_hardware_status_cache", None)
+    monkeypatch.setattr(runtime, "_probe_hardware_status", lambda: probes.append(1) or {"gpu": f"probe-{len(probes)}", "vram_free_gb": 8.0})
+    monkeypatch.setattr(runtime.time, "monotonic", lambda: clock[0])
+
+    first = runtime.hardware_status()
+    second = runtime.hardware_status()  # /api/readiness and /api/health in one refresh
+    assert first == second == {"gpu": "probe-1", "vram_free_gb": 8.0}
+    assert len(probes) == 1
+
+    second["vram_free_gb"] = 0.0  # a caller mutating its copy must not poison the cache
+    assert runtime.hardware_status()["vram_free_gb"] == 8.0
+
+    clock[0] += runtime.HARDWARE_STATUS_MAX_AGE_SECONDS  # cache expired
+    assert runtime.hardware_status()["gpu"] == "probe-2"
+    assert len(probes) == 2
+
+    assert runtime.hardware_status(max_age=0)["gpu"] == "probe-3"  # explicit bypass

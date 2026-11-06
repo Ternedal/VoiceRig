@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
+import time
 from pathlib import Path
 
 from voicerig.config import data_dir
@@ -92,7 +94,28 @@ def model_warmup_status() -> dict:
     }
 
 
-def hardware_status() -> dict:
+# /api/health and /api/readiness both call voice_build_readiness(), and the UI
+# fetches both on every refresh, so one screen refresh probed the GPU twice:
+# torch.cuda.get_device_properties + torch.cuda.mem_get_info (a CUDA-synchronising
+# call that competes with a running build for the device). A one-second cache
+# collapses those into a single probe; a status display does not need
+# sub-second VRAM freshness.
+HARDWARE_STATUS_MAX_AGE_SECONDS = 1.0
+_hardware_status_cache: tuple[float, dict] | None = None
+
+
+def hardware_status(*, max_age: float = HARDWARE_STATUS_MAX_AGE_SECONDS) -> dict:
+    global _hardware_status_cache
+    now = time.monotonic()
+    cached = _hardware_status_cache
+    if cached is not None and max_age > 0 and now - cached[0] < max_age:
+        return copy.deepcopy(cached[1])
+    status = _probe_hardware_status()
+    _hardware_status_cache = (now, status)
+    return copy.deepcopy(status)
+
+
+def _probe_hardware_status() -> dict:
     status = {
         "chatterbox_device": "cpu",
         "diarization_device": "cpu",

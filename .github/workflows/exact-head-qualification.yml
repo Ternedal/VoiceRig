@@ -23,7 +23,7 @@ jobs:
     env:
       EXPECTED_SHA: ${{ inputs.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.EXPECTED_SHA }}
       - name: Assert exact checkout authority
@@ -31,7 +31,7 @@ jobs:
         run: |
           actual="$(git rev-parse HEAD)"
           test "$actual" = "$EXPECTED_SHA" || { echo "checkout mismatch: $actual != $EXPECTED_SHA" >&2; exit 1; }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: python -m pip install -e ".[test]"
@@ -55,7 +55,7 @@ jobs:
     env:
       EXPECTED_SHA: ${{ inputs.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.EXPECTED_SHA }}
       - name: Assert exact checkout authority
@@ -65,7 +65,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $actual -ne $env:EXPECTED_SHA.ToLowerInvariant()) {
             throw "checkout mismatch: $actual != $env:EXPECTED_SHA"
           }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Windows PowerShell syntax

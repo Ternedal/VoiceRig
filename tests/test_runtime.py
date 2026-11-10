@@ -106,3 +106,33 @@ def test_hardware_status_probes_once_per_second(monkeypatch):
     assert len(probes) == 2
 
     assert runtime.hardware_status(max_age=0)["gpu"] == "probe-3"  # explicit bypass
+
+
+def test_concurrent_cache_misses_share_one_probe(monkeypatch):
+    # Codex VoiceRig #32: /api/readiness and /api/health arrive together on two worker threads.
+    import threading as _threading
+
+    probes = []
+    started = _threading.Event()
+    release = _threading.Event()
+
+    def slow_probe():
+        probes.append(1)
+        started.set()
+        release.wait(5)  # a GPU call that releases the GIL
+        return {"gpu": f"probe-{len(probes)}", "vram_free_gb": 8.0}
+
+    monkeypatch.setattr(runtime, "_hardware_status_cache", None)
+    monkeypatch.setattr(runtime, "_probe_hardware_status", slow_probe)
+    results = []
+    first = _threading.Thread(target=lambda: results.append(runtime.hardware_status()))
+    first.start()
+    assert started.wait(5)
+    second = _threading.Thread(target=lambda: results.append(runtime.hardware_status()))
+    second.start()
+    second.join(0.2)  # the second caller waits for the first probe instead of starting its own
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert len(probes) == 1
+    assert results == [{"gpu": "probe-1", "vram_free_gb": 8.0}] * 2

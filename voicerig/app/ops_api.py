@@ -20,8 +20,8 @@ router = APIRouter(tags=["operations"])
 _UI_DIR = Path(__file__).resolve().parents[1] / "ui"
 
 
-@router.on_event("startup")
-def _configure_file_diagnostics() -> None:
+def configure_file_diagnostics() -> None:
+    """Startup hook, run from the app lifespan in voicerig.app.main."""
     configure_logging()
 
 

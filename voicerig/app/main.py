@@ -3,14 +3,17 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from voicerig import __version__
+from voicerig.app.job_api import recover_interrupted_jobs
 from voicerig.app.job_api import router as jobs_router
 from voicerig.app.netguard import allow_lan, is_loopback_client
+from voicerig.app.ops_api import configure_file_diagnostics
 from voicerig.app.ops_api import router as ops_router
 from voicerig.app.pipeline import (
     SUPPORTED_EXTENSIONS,
@@ -39,7 +42,19 @@ from voicerig.profiles.package import validate_package
 from voicerig.runtime import cuda_memory_stats, reset_cuda_peaks, voice_build_readiness
 from voicerig.source_control import source_status
 
-app = FastAPI(title="VoiceRig", version=__version__)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # Same two startup hooks the routers used to register with the deprecated
+    # @router.on_event("startup"), in the same order (jobs, then ops). FastAPI
+    # has deprecated on_event since 0.93 and the lower bound here is open
+    # (fastapi>=0.115), so a future release would turn this into a CI-red
+    # overnight; lifespan is the supported form.
+    recover_interrupted_jobs()
+    configure_file_diagnostics()
+    yield
+
+
+app = FastAPI(title="VoiceRig", version=__version__, lifespan=_lifespan)
 app.include_router(tts_router)
 app.include_router(jobs_router)
 app.include_router(ops_router)

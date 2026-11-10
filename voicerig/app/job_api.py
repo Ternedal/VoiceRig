@@ -14,8 +14,8 @@ from voicerig.languages import normalize_build_locale, validate_accent
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 
-@router.on_event("startup")
-def _recover_interrupted_jobs() -> None:
+def recover_interrupted_jobs() -> None:
+    """Startup hook, run from the app lifespan in voicerig.app.main."""
     job_manager.recover()
     prune_job_history()
 

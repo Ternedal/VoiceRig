@@ -1,7 +1,19 @@
 name: tests
+# A push to a PR branch used to trigger BOTH the push run and the pull_request
+# run of this workflow (measured 06/11-2026: every job 2x per PR commit, ~5
+# duplicate runner-minutes). Push runs are now main-only, like codeql.yml;
+# PR branches get the pull_request run, and workflow_dispatch covers an
+# on-demand run of any branch. concurrency supersedes obsolete runs of the
+# same ref so a rapid second push does not queue behind the first.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   unit:

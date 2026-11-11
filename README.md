@@ -324,6 +324,8 @@ V1 passed this chain on RC25; see [`docs/RELEASE_CANDIDATE_POLICY.md`](docs/RELE
 
 ## Kendte begrænsninger
 
+Mulighederne for hvert punkt og de tilhørende kodefund står i [issue #38](https://github.com/Ternedal/VoiceRig/issues/38).
+
 - **Remote/split-host ModelRig er ikke implementeret.** Uden loopback-`MODELRIG_BASE_URL` (eller med `MODELRIG_LOCAL_INSTALL=0`) poster VoiceRig til `/api/v1/voices/import`, som ModelRig ikke har. Installationen i ModelRig fejler da, mens profilen bliver i VoiceRigs bibliotek. Se [`docs/MODELRIG_INTEGRATION.md`](docs/MODELRIG_INTEGRATION.md).
 - **Port 8765 er fast.** `voicerig`-entrypointet (brugt af `start-windows.ps1` og autostart) binder altid `127.0.0.1:8765`; port og bind-adresse kan ikke konfigureres via `.env`.
 - **Røst hentes ved første danske build**, ikke under warmup; readiness kan være grøn, før den danske standardmotor er hentet.

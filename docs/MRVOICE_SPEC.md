@@ -283,6 +283,15 @@ Importer skal desuden afvise:
 - ukendt locale/base-language
 - accent, der ikke er registreret for den valgte locale
 
+**Implementeringsstatus:** Kravet om at afvise ukendt locale/base-language er
+endnu ikke fuldt opfyldt af importeren. `validate_package()`
+(`voicerig/profiles/package.py`) kontrollerer i dag kun `language` syntaktisk
+(`^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$`) og validerer `accent` mod locale, når
+feltet findes. En pakke med ukendt base-language importeres derfor og afvises
+først ved syntese/status (`engine_language_id`); en ukendt region med kendt
+base-language (fx `da-XX`) accepteres og køres med base-language-id'et. Fuld
+locale-validering (`normalize_build_locale`) sker kun i build-flowet.
+
 ## Kompatibilitet
 
 En v1-importer må ikke antage, at fremtidige `.mrvoice`-versioner har samme

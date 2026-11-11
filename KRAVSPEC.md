@@ -1,5 +1,12 @@
 # VoiceRig v1 — kravspecifikation og sporbarhed
 
+> **Status (2026-11-11).** Dette er V1-kravspecifikationen. V1 er accepteret på
+> RC25 (`release/voicerig-v1-physical-rc25`, issue #18 og #19) — se
+> [`docs/RELEASE_CANDIDATE_POLICY.md`](docs/RELEASE_CANDIDATE_POLICY.md). Afkrydsningerne
+> nedenfor er ikke opdateret efter accepten. Aktuel motorstatus (Røst v3 som dansk
+> standardmotor) står i [`docs/LANGUAGE_LOCALE_ACCENT.md`](docs/LANGUAGE_LOCALE_ACCENT.md)
+> og [`docs/MRVOICE_SPEC.md`](docs/MRVOICE_SPEC.md).
+
 ## Produktmål
 
 Den normale bruger skal kun:

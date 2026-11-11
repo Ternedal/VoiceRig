@@ -1,6 +1,6 @@
 # VoiceRig fysisk acceptance — RTX 3060 12 GB
 
-Denne runbook er den sidste gate før VoiceRig V1 the V1 release candidate må gøres ready/merge.
+Denne runbook er den sidste gate før en VoiceRig release-kandidat må markeres accepteret.
 Den skal køres på den faktiske Windows-rig med NVIDIA RTX 3060 12 GB og et eller
 flere rigtige lyd-/videoklip med den stemme, der skal clones.
 
@@ -10,10 +10,10 @@ Den fulde test går gennem **de samme processer og HTTP-flader som produktet**:
 validation script
    │
    ├──> VoiceRig :8765 /api/voices
-   │       └── Chatterbox V3 på CUDA + pyannote CPU
+   │       └── Røst v3 (dansk) / Chatterbox V3 på CUDA + pyannote CPU
    │
    ├──> VoiceRig :8765 /api/tts/synthesize
-   │       └── samme langlivede Chatterbox-model
+   │       └── samme langlivede Chatterbox-familie-model
    │
    └──> ModelRig backend :8080 /api/v1/health/full
            └── checks.tts.provider == "voicerig"
@@ -25,14 +25,17 @@ anden CUDA-model i validatorprocessen.
 
 ## 1. Hent den eksakte kandidat
 
-Den autoritative immutable release-ref og dens eksakte SHA står i the current release-candidate evidence record.
-Checkout altid den ref, ikke en bevægelig udviklingsbranch:
+Den aktuelle kandidats immutable release-ref og eksakte SHA står i kandidatens
+evidence-issue. For V1 er det RC25 (`release/voicerig-v1-physical-rc25`, issue #18
+for fysisk acceptance og #19 for ModelRig E2E) — se
+[`RELEASE_CANDIDATE_POLICY.md`](RELEASE_CANDIDATE_POLICY.md). Checkout altid den
+ref, ikke en bevægelig udviklingsbranch:
 
 ```powershell
-cd C:\Users\admin\Desktop\VoiceRig
+cd <din VoiceRig-checkout>
 git fetch origin
-git checkout <release-ref-fra-issue-3>
-git reset --hard <sha-fra-issue-3>
+git checkout <release-ref-fra-evidence-issue>
+git reset --hard <sha-fra-evidence-issue>
 git status --short
 git rev-parse HEAD
 ```
@@ -77,6 +80,9 @@ Setup/installation skal bevise:
 - CUDA-enabled Torch 2.6.0 i hovedmiljøet
 - den verificerede Chatterbox V3 source-revision
 - dansk (`da`) findes i den indlæste Chatterbox V3
+- bemærk: model-warmup henter og verificerer kun Chatterbox V3; Røst v3-checkpointet
+  til dansk hentes fra Hugging Face første gang Røst indlæses (normalt ved første
+  danske voice-build), så rig'en skal have netværk ved første danske build
 - separat CPU-only diarization-miljø
 - pyannote.audio 4.0.7
 - Torch 2.8.0 CPU
@@ -177,7 +183,7 @@ Krav til PASS omfatter:
 - `diarization_used == true`
 - `.mrvoice` oprettes, kan downloades og valideres
 - `reference.wav` er gyldig og hørbar
-- Chatterbox conditioning + preview lykkes
+- Røst-conditioning + preview lykkes (dansk; øvrige sprog: Chatterbox V3)
 - profilen installeres i `~/.kaliv/voices/` og bliver default
 - TTS-responsen siger `device=cuda`
 - TTS-responsen siger præcis den netop byggede package
@@ -263,9 +269,9 @@ metadata, hashes og verdicts.
 
 ## Definition of Done
 
-the V1 release candidate må først gøres ready og merges, når:
+En release-kandidat må først markeres accepteret, når:
 
-1. alle autoritative GitHub Actions-workflows er grønne på samme pinned VoiceRig commit,
+1. alle autoritative GitHub Actions-workflows (se [README → Build og CI](../README.md#build-og-ci)) er grønne på samme pinned VoiceRig commit,
 2. fysisk checkout er clean og matcher pinned release-ref,
 3. aktiv VoiceRig-service er clean og matcher samme startup revision **og root**,
 4. produktinstallation + model-warmup er PASS,
@@ -278,5 +284,5 @@ the V1 release candidate må først gøres ready og merges, når:
 11. `release-acceptance.json` er `ok: true`,
 12. der ikke er nye review-blockers.
 
-Hvis ét punkt fejler, beholdes PR'en som draft. Hvis kode eller release-ref ændres,
+Hvis ét punkt fejler, accepteres kandidaten ikke. Hvis kode eller release-ref ændres,
 er tidligere fysisk evidence stale og skal køres igen.

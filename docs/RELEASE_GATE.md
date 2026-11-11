@@ -126,7 +126,7 @@ Git-ignorerede.
 
 ## 4. Software/distribution gate
 
-Alle autoritative GitHub Actions-workflows på **samme pinned VoiceRig commit**
+Alle autoritative GitHub Actions-workflows (se [README → Build og CI](../README.md#build-og-ci)) på **samme pinned VoiceRig commit**
 skal være grønne. Gaten omfatter:
 
 1. pytest + `compileall`,
@@ -148,7 +148,7 @@ Et grønt unit- eller editable-checkout alene er derfor ikke nok til release.
 
 ## 5. Merge-regel
 
-the V1 release candidate kan først gøres ready/merge, når:
+En release-kandidat kan først markeres accepteret, når:
 
 1. `release-acceptance.json` siger `ok: true`,
 2. final `source.revision` og `source.root` matcher den pinned release-kandidat,

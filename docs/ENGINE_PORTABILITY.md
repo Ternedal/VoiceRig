@@ -1,5 +1,11 @@
 # VoiceRig engine-portabilitet
 
+> **Historisk kontekst (2026-11-11).** Dokumentet er skrevet før RC22–RC25. RC19 er
+> siden afløst; Røst v3 blev dansk produktionsmotor efter RC22–RC24, og V1 er
+> accepteret på RC25 — se [`RELEASE_CANDIDATE_POLICY.md`](RELEASE_CANDIDATE_POLICY.md).
+> Aktuel motorstatus står i [`LANGUAGE_LOCALE_ACCENT.md`](LANGUAGE_LOCALE_ACCENT.md)
+> og [`MRVOICE_SPEC.md`](MRVOICE_SPEC.md).
+
 Dette dokument beskriver den motor-uafhængige kontrakt, der ligger **efter** den
 frosne RC19 A/B-kandidat. RC19 ændres ikke af arbejdet her.
 

@@ -1,6 +1,6 @@
 # Architecture
 
-_Last reviewed against `main` on 2026-10-01._
+_Last reviewed against `main` on 2026-11-11._
 
 ```mermaid
 flowchart TB
@@ -11,7 +11,7 @@ flowchart TB
     AUTO["Clear dominant speaker\nautomatic"]
     PICK["Ambiguous speakers\nplayable samples + one user choice"]
     REF["Reference ranking / stitching"]
-    CB["Chatterbox Multilingual V3\nCUDA"]
+    CB["Røst v3 (dansk) / Chatterbox Multilingual V3\nCUDA"]
     PKG[".mrvoice\nreference + conditioning + preview\nchecksums + engine revision"]
     LIB["~/.kaliv/voices/\natomic same-host install"]
     SIDE["VoiceRig sidecar :8765\nloopback-only"]
@@ -36,7 +36,13 @@ ikke kan vælge personen sikkert selv.
 - VoiceRig/FastAPI
 - Chatterbox Multilingual V3 fra den verificerede source-revision angivet i
   `voicerig/model_contract.py`
+- Røst v3 (`CoRal-project/roest-v3-chatterbox-500m`, pinnet revision i
+  `voicerig/model_contract.py`) — dansk-finetunet Chatterbox Multilingual-checkpoint,
+  der indlæses i samme runtime via `ChatterboxMultilingualTTS.from_local`
 - Torch 2.6.0 + Torchaudio 2.6.0 med CUDA 12.6
+
+Nye danske profiler bygges med Røst v3; øvrige sprog bruger Chatterbox
+Multilingual V3 (`_build_engine_spec()` i `voicerig/app/pipeline.py`).
 
 VoiceRig bruger ikke PyPI-versionen som V3-identitet. Source-revisionen er en del
 af både dependency-kontrakten og nye `.mrvoice`-manifesters engine metadata.
@@ -82,7 +88,15 @@ kontrakt, men VoiceRig behøver ikke dens file decoder til egne normalized input
 2. pyannote community-1 downloades og indlæses i CPU-runtime.
 3. package-/Torch-versioner og CPU-only status verificeres.
 4. in-memory PCM-input-protokollen registreres.
-5. `voicerig-data/model-readiness.json` skrives atomisk.
+5. `<VoiceRig data dir>/model-readiness.json` (default
+   `%LOCALAPPDATA%\VoiceRig\model-readiness.json`) skrives atomisk.
+
+Warmup og readiness-markøren dækker kun Chatterbox V3 (`CURRENT_ENGINE` i
+`voicerig/model_warmup.py`), ikke Røst. Røst-checkpointet hentes med
+`huggingface_hub.snapshot_download` (kun de filer runtime bruger) første gang Røst
+indlæses (`voicerig/engines/chatterbox.py`) — normalt ved første danske
+voice-build. Readiness kan derfor være grøn, før Røst er hentet; første danske
+build kræver netværksadgang til Hugging Face.
 
 UI/readiness accepterer kun en marker, der matcher den **aktuelle** modelkontrakt.
 En kode-/modelkontrakt-opgradering gør derfor en gammel marker stale og kræver
@@ -125,7 +139,9 @@ VoiceRig v1 målretter en enkelt 12 GB NVIDIA-GPU:
 - Chatterbox ejer CUDA.
 - pyannote er CPU-only.
 - Kun ét voice-build kan køre ad gangen.
-- Build og sidecar-TTS deler samme cached Chatterbox-model.
+- Build og sidecar-TTS deler samme cached model; der er højst én resident
+  Chatterbox-familie-model pr. device, og et skift mellem Chatterbox V3 og Røst
+  frigiver den forrige, før den nye indlæses.
 - Conditioning + preview holdes atomisk under samme re-entrant GPU-lås.
 - Peak CUDA allocated/reserved måles i **VoiceRig-serverprocessen**, ikke i en
   separat validatorproces.

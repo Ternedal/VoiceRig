@@ -22,6 +22,7 @@ VoiceRig physical and cross-product acceptance refs are forensic release evidenc
 
 ### ModelRig E2E
 
+- Repo: `Ternedal/ModelRig`
 - Ref: `release/voicerig-v1-e2e-rc12`
 - SHA: `feec69a79488aa95d9cb8c036882d21a38122c43`
 - Final cross-product gate: issue #19 — PASS / completed

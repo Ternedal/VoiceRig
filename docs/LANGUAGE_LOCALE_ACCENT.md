@@ -78,4 +78,13 @@ VoiceRig rejects:
 - accent codes not registered for the selected locale,
 - US regional accents attached to `en-GB`, German, Danish, or other unrelated locales.
 
+**Implementation status:** the voice-build flow enforces all four rules
+(`normalize_build_locale` + `validate_accent`). The `.mrvoice` importer
+(`validate_package()` in `voicerig/profiles/package.py`) does not yet enforce the
+first two: it checks `language` only syntactically and validates `accent` against
+the locale when present. An imported package with an unknown base language is
+accepted and rejected only at synthesis/status time (`engine_language_id`); an
+unknown region with a known base language (e.g. `da-XX`) is accepted and runs
+with the base language id.
+
 The UI obtains the same catalog from `/api/voice-options`; it does not maintain a separate hardcoded runtime list.

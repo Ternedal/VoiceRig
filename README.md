@@ -246,7 +246,7 @@ Alle scripts ligger i repo-roden og køres fra en PowerShell i checkoutet.
 | `record-engine-decision.ps1` | Registrér dansk motorbeslutning (se `docs/RELEASE_GATE.md`) | `-Winner {chatterbox\|rost\|omnivoice\|none}`, `-ChatterboxScore`, `-RostScore`, `-OmniVoiceScore`, `-DecisionNote`, `-TestText` (påkrævede), `-ChatterboxNote`, `-RostNote`, `-OmniVoiceNote`, `-Output` |
 | `migrate-state-windows.ps1` | Eksport/import af brugerdata (se `docs/RIG_MIGRATION.md`) | `-Action {Export\|Import\|Verify}` (påkrævet), `-Archive`, `-OutDir`, `-ForceRestore`, `-NoRestart` |
 | `configure-repository-authority.ps1` | Vis/anvend branch protection og required checks på `main` (kræver `gh` med admin-ret) | `-Apply` |
-| `verify-repository-authority.ps1` | Verificér at branch protection på `main` matcher de forventede checks (kræver `gh`) | — |
+| `verify-repository-authority.ps1` | Verificér at branch protection på `main` matcher de forventede checks (kræver `gh` med admin-ret). Køres fra et rent `main`-checkout, og GitHubs `main` skal stå på samme commit. Exit 0 = PASS, exit 2 = fejlende dom | `-Json` (én JSON-linje til Kalivs `repository_authority`-gate) |
 
 Default-URL'er i validatorerne: VoiceRig `http://127.0.0.1:8765`, ModelRig backend `http://127.0.0.1:8080`, ModelRig worker `http://127.0.0.1:8099`.
 

@@ -243,6 +243,10 @@ class VoiceJobManager:
                 "source": source_status(),
                 "pid": os.getpid(),
             }
+            # Remove the source copies BEFORE publishing the terminal state: a poller that
+            # sees "succeeded" must never still find the uploaded audio on disk (#36).
+            # The job's state lives in <id>.json, outside the work dir.
+            self._cleanup_inputs(job_id)
             self._update(
                 job_id,
                 state="succeeded",
@@ -254,7 +258,6 @@ class VoiceJobManager:
                 result=final_result,
                 error=None,
             )
-            self._cleanup_inputs(job_id)
         except SpeakerSelectionRequired as exc:
             self._pause(
                 job_id,
@@ -279,6 +282,7 @@ class VoiceJobManager:
                 error=None,
             )
         except BuildCancelled as exc:
+            self._cleanup_inputs(job_id)  # before the terminal state, as for success (#36)
             self._update(
                 job_id,
                 state="cancelled",
@@ -289,8 +293,8 @@ class VoiceJobManager:
                 result=None,
                 error=None,
             )
-            self._cleanup_inputs(job_id)
         except Exception as exc:  # noqa: BLE001 - job boundary must persist useful failure state
+            self._cleanup_inputs(job_id)  # before the terminal state, as for success (#36)
             self._update(
                 job_id,
                 state="failed",
@@ -301,7 +305,6 @@ class VoiceJobManager:
                 result=None,
                 error=str(exc),
             )
-            self._cleanup_inputs(job_id)
         finally:
             with self._lock:
                 self._active.discard(job_id)

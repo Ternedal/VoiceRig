@@ -246,3 +246,39 @@ def test_reference_selection_rejects_choice_not_from_job(monkeypatch, tmp_path: 
             raise AssertionError("invalid reference choice was accepted")
     finally:
         manager._executor.shutdown(wait=True)
+
+
+def test_terminal_state_is_never_published_while_the_work_dir_exists(monkeypatch, tmp_path: Path):
+    """#36: a poller that sees succeeded/failed/cancelled must not still find the source copies.
+
+    Deterministic: every terminal write is recorded together with whether the work dir still
+    existed at that moment, so the old order (publish, then remove) fails every time.
+    """
+    root = _configure(monkeypatch, tmp_path)
+
+    def failing_build(*args, **kwargs):
+        raise RuntimeError("model exploded")
+
+    def cancelled_build(*args, **kwargs):
+        raise jobs.BuildCancelled("Voice-build blev annulleret.")
+
+    for build, wanted in ((_successful_build, "succeeded"), (failing_build, "failed"),
+                          (cancelled_build, "cancelled")):
+        monkeypatch.setattr(jobs, "create_voice", build)
+        manager = VoiceJobManager()
+        seen: list[tuple[str, bool]] = []
+        original_write = manager._write
+
+        def recording_write(payload, _original=original_write, _seen=seen):
+            if payload.get("state") in {"succeeded", "failed", "cancelled"}:
+                _seen.append((payload["state"], (root / "jobs" / str(payload["id"])).exists()))
+            return _original(payload)
+
+        manager._write = recording_write
+        try:
+            created = manager.create("Test Voice", "da", False, [("input.wav", _source(tmp_path))])
+            finished = _wait(manager, created["id"], {wanted})
+            assert finished["state"] == wanted
+            assert seen == [(wanted, False)], f"{wanted} was published while the work dir existed: {seen}"
+        finally:
+            manager._executor.shutdown(wait=True)

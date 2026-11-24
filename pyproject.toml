@@ -28,7 +28,7 @@ voice = [
 # verified version in a separate CPU-only venv/process so future pyannote
 # releases cannot silently change VoiceRig's diarization contract.
 diarization = [
-  "pyannote.audio==4.0.7",
+  "pyannote.audio==4.1.1",
 ]
 test = ["pytest>=8.0"]
 
